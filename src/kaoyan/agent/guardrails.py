@@ -45,16 +45,20 @@ KAOYAN_STRONG_HINTS = (
     "专硕", "学硕", "调剂", "分数线", "研招", "招多少", "考什么",
 )
 _KIND_HINTS: dict[str, tuple[str, ...]] = {
-    "score_line": ("复试线", "分数线", "国家线", "校线", "基本线", "多少分", "进复试"),
-    "plan": ("招多少", "招几", "多少人", "几个人", "计划", "名额", "统招", "统考招", "推免多少", "公开招考", "拟招"),
-    "subjects": ("考什么", "考不考", "考408", "考 408", "初试科目", "科目", "专业课", "考哪"),
-    "compare": ("对比", "比较", "相比", "vs", "VS"),
+    "score_line": ("复试线", "分数线", "国家线", "校线", "基本线", "多少分", "进复试", "单科线", "线多少"),
+    "plan": ("招多少", "招几", "招得", "多少人", "几个人", "计划", "名额", "统招", "统考招", "推免多少", "公开招考", "拟招", "目录"),
+    "subjects": ("考什么", "考不考", "考408", "考 408", "初试科目", "科目", "专业课", "考哪", "考数学", "数学考"),
+    "compare": ("对比", "比较", "相比", "差多少", "一样吗", "vs", "VS"),
     "filter": ("哪些", "筛选", "有哪些", "哪几个", "列出所有"),
     "directions": ("有没有", "方向"),
 }
 _PRIVACY_RE = re.compile(
-    r"(名单|录取|复试名单|拟录取).{0,12}(有没有|是否有|查|找|姓名|名字|编号|某某)|考生编号|准考证|姓名|个人成绩"
+    r"(名单|录取|复试名单|拟录取).{0,12}(有没有|是否有|查|找|姓名|名字|编号|某某)"
+    r"|考生编号|准考证|姓名|个人成绩|是谁|叫什么|名单上|他进复试|他考了|他被"
+    r"|叫[\u4e00-\u9fff]{2,4}的考生|同学.{0,40}他"
 )
+_COMPARE_TWO_RE = re.compile(r"各(?!占)|哪个.{0,12}(?:好考|更好|招得)|能直接比")
+FOUR_SCHOOLS = ("sysu", "scut", "jnu", "scnu")
 _THRESHOLD_RE = re.compile(
     r"(统招|统考|公开招考)[^0-9]{0,6}?(>=|≥|>|＞|大于等于|大于|超过|多于|不少于|至少)\s*(\d+)"
 )
@@ -80,6 +84,8 @@ def detect_kaoyan_intent(goal: str) -> dict[str, Any]:
 
     text = goal or ""
     schools = find_schools(text)
+    if "四校" in text:
+        schools = list(dict.fromkeys([*schools, *FOUR_SCHOOLS]))
     codes = list(dict.fromkeys(PROGRAM_CODE_RE.findall(text)))
     masked = PROGRAM_CODE_RE.sub(" ", text)
     prefixes = [p for p in dict.fromkeys(DISCIPLINE_RE.findall(masked)) if not YEAR_RE.fullmatch(p)]
@@ -89,9 +95,22 @@ def detect_kaoyan_intent(goal: str) -> dict[str, Any]:
         if len(name) > 2:
             colleges.append(name)
     years = [int(y) for y in YEAR_RE.findall(text)]
-    is_kaoyan = bool(schools or codes or any(k in text for k in KAOYAN_STRONG_HINTS))
+    is_kaoyan = bool(schools or codes or any(k in text for k in KAOYAN_STRONG_HINTS) or "四校" in text)
 
     kinds = [k for k, hints in _KIND_HINTS.items() if any(h in text for h in hints)]
+    if "导师" in text and "filter" in kinds:
+        kinds.remove("filter")
+    if re.search(r"推免(?!面试)", text) and "plan" not in kinds:
+        kinds.append("plan")
+    if "非全" in text:
+        for kind in ("plan", "score_line"):
+            if kind not in kinds:
+                kinds.append(kind)
+    two_targets = len(schools) >= 2 or len(codes) >= 2
+    if "compare" not in kinds and (
+        (two_targets and _COMPARE_TWO_RE.search(text)) or ("最高" in text and "最低" in text)
+    ):
+        kinds.append("compare")
     if "四校" in text and "compare" not in kinds and ("复试线" in text or "计划" in text):
         kinds.append("compare")
     privacy = bool(_PRIVACY_RE.search(text))
@@ -139,7 +158,7 @@ def detect_kaoyan_intent(goal: str) -> dict[str, Any]:
         "codes": codes,
         "prefixes": prefixes,
         "colleges": colleges,
-        "year": years[0] if years else None,
+        "year": years[0] if len(years) == 1 else None,
         "kinds": kinds,
         "numeric": numeric,
         "privacy": privacy,
