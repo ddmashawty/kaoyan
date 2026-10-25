@@ -19,6 +19,7 @@ from kaoyan.agent.guardrails import (
 )
 from kaoyan.agent.prompts import KAOYAN_FINAL_SYSTEM, KAOYAN_RETRY_PROMPT
 from kaoyan.config import get_settings
+from kaoyan.render import lookup_template, render_placeholders
 from kaoyan.tools import kaoyan as ky
 
 RunTool = Callable[[str, dict[str, Any]], None]
@@ -81,7 +82,7 @@ def structured_calls(intent: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
     if college and not q.find_programs(school=school or None, college=college):
         college = ""
     kinds = set(intent.get("kinds") or [])
-    year = intent.get("year") or 0
+    year = intent.get("year")
     scope = _nonempty(school=school, college=college, code=code)
 
     if intent.get("privacy"):
@@ -97,7 +98,7 @@ def structured_calls(intent: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
                 fields += ["plans", "public_plan"]
             if "subjects" in kinds:
                 fields.append("subjects")
-        args: dict[str, Any] = _nonempty(fields=",".join(fields), year=year)
+        args: dict[str, Any] = _nonempty(fields=",".join(fields), year=year or 0)
         if len(codes) > 1 or len(schools) > 1:
             ids = [
                 p["id"]
@@ -114,7 +115,7 @@ def structured_calls(intent: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
     scopes = [_nonempty(school=school, college=college, code=c) for c in codes] if len(codes) > 1 else [scope]
     for s in (s for s in scopes if s):
         if "score_line" in kinds:
-            calls.append(("get_score_lines", {**s, "year": year or 2026}))
+            calls.append(("get_score_lines", {**s, "year": year if year is not None else q.resolve_year(None, "score_lines")}))
         if "subjects" in kinds:
             calls.append(("get_exam_subjects", s))
         calls.append(("search_programs", s))
@@ -239,15 +240,17 @@ def reflect(state: dict[str, Any]) -> dict[str, Any]:
             "retry_hint": "", "facts": facts, "status": "reflected"}
 
 
-def _evidence_blocks(state: dict[str, Any]) -> tuple[str, str]:
-    """(text shown to the model, raw text numbers are validated against)."""
+def _evidence_blocks(state: dict[str, Any]) -> tuple[str, str, dict[str, dict[str, Any]]]:
+    """(text shown to the model, raw text numbers are validated against, Fk → fact)."""
     results = state.get("tool_results") or []
     outs = structured_results(results)
     per_tool = _EVIDENCE_BUDGET // max(1, len(outs))
     parts = ["【结构化证据】"]
+    fact_map: dict[str, dict[str, Any]] = {}
     for r in outs:
         args = json.dumps(r.get("args") or {}, ensure_ascii=False)
-        parts.append(f"- {r['tool']}({args}):\n{ky.llm_view(r['tool'], r['output'], per_tool)}")
+        view, _ = ky.llm_view_and_facts(r["tool"], r["output"], per_tool, mapping=fact_map)
+        parts.append(f"- {r['tool']}({args}):\n{view}")
     if len(outs) == 0:
         parts.append("（无）")
     rag = [c for c in state.get("citations") or [] if c.get("source_type") != "kaoyan_db"][:_RAG_SNIPPETS]
@@ -267,29 +270,62 @@ def _evidence_blocks(state: dict[str, Any]) -> tuple[str, str]:
         [state["user_goal"], *(str(r["output"]) for r in outs), *((c.get("text") or "") for c in rag), *notes,
          *(json.dumps(e, ensure_ascii=False) for e in exports)]
     )
-    return shown, raw
+    return shown, raw, fact_map
+
+
+def _retry_problems(validation: dict[str, Any]) -> str:
+    bits: list[str] = []
+    if validation.get("unsupported"):
+        bits.append("证据中没有的数字：" + "、".join(validation["unsupported"]))
+    if validation.get("missing"):
+        bits.append("不存在的编号：" + "、".join(validation["missing"]))
+    if validation.get("misattributed"):
+        bits.append("写到别的学校或专业名下的编号：" + "、".join(validation["misattributed"]))
+    return "；".join(bits)
+
+
+def _bind_answer(answer: str, raw: str, fact_map: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    rendered, attr = render_placeholders(answer, fact_map)
+    unsupported = find_unsupported_numbers(rendered, raw)
+    return rendered, {**attr, "unsupported": unsupported}
 
 
 def finalize(state: dict[str, Any], llm: Any) -> tuple[str, dict[str, Any]]:
-    shown, raw = _evidence_blocks(state)
+    shown, raw, fact_map = _evidence_blocks(state)
+    intent = state.get("intent") or {}
+    templated = lookup_template(intent, fact_map)
+    empty = {"unsupported": [], "regenerated": False, "stripped": [], "missing": [], "misattributed": []}
+    if templated:
+        validation = {**empty, "template": True, "fact_map": {k: v["fact_id"] for k, v in fact_map.items()}}
+        return templated, validation
+
     messages = [
         SystemMessage(content=KAOYAN_FINAL_SYSTEM),
         HumanMessage(content=f"用户问题：{state['user_goal']}\n\n{shown}"),
     ]
     answer = str(llm.invoke(messages).content).strip()
-    validation: dict[str, Any] = {"unsupported": find_unsupported_numbers(answer, raw), "regenerated": False,
-                                  "stripped": []}
-    if validation["unsupported"]:
+    bound, checks = _bind_answer(answer, raw, fact_map)
+    validation: dict[str, Any] = {
+        **empty,
+        **checks,
+        "template": False,
+        "fact_map": {k: v["fact_id"] for k, v in fact_map.items()},
+    }
+    problems = validation["unsupported"] or validation["missing"] or validation["misattributed"]
+    if problems:
         retry = messages + [
             AIMessage(content=answer),
-            HumanMessage(content=KAOYAN_RETRY_PROMPT.format(numbers="、".join(validation["unsupported"]))),
+            HumanMessage(content=KAOYAN_RETRY_PROMPT.format(problems=_retry_problems(validation))),
         ]
         answer = str(llm.invoke(retry).content).strip()
+        bound, retry_checks = _bind_answer(answer, raw, fact_map)
         validation["regenerated"] = True
-        still = find_unsupported_numbers(answer, raw)
+        still = retry_checks["unsupported"] or retry_checks["missing"] or retry_checks["misattributed"]
         if still:
-            validation["stripped"] = still
-            answer = strip_unsupported_numbers(answer, raw).rstrip() + "\n\n" + UNSUPPORTED_NOTE
-    if (state.get("intent") or {}).get("privacy") and "个人信息" not in answer:
-        answer = PRIVACY_NOTICE + "\n\n" + answer
-    return answer, validation
+            if retry_checks["unsupported"]:
+                validation["stripped"] = list(retry_checks["unsupported"])
+                bound = strip_unsupported_numbers(bound, raw).rstrip()
+            bound = bound.rstrip() + "\n\n" + UNSUPPORTED_NOTE
+    if intent.get("privacy") and "个人信息" not in bound:
+        bound = PRIVACY_NOTICE + "\n\n" + bound
+    return bound, validation

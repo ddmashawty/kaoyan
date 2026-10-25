@@ -9,6 +9,7 @@ answer can quote them.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -76,6 +77,36 @@ def baseline_discipline(code: str) -> str:
 def singles_text(line: dict[str, Any]) -> str:
     vals = [line.get(k) for k in ("politics", "foreign_lang", "subject1", "subject2")]
     return "/".join(str(v) for v in vals) if any(v is not None for v in vals) else ""
+
+
+_METRIC_TABLE = {
+    "score_line": "score_lines",
+    "score_lines": "score_lines",
+    "plan": "plans",
+    "plans": "plans",
+    "subjects": "exam_subjects",
+    "exam_subjects": "exam_subjects",
+    "stats": "admission_stats",
+    "admission_stats": "admission_stats",
+}
+
+
+def make_fact_id(
+    *,
+    table: str,
+    program_id: str | None,
+    kind: str,
+    year: int | None,
+    pool_scope: str | None = None,
+    value: Any,
+    upper_bound: bool = False,
+    source_doc_ids: list[str] | tuple[str, ...] = (),
+) -> str:
+    """Stable id for a merged fact. Same value + sources → same id."""
+    sources = ",".join(sorted({s for s in source_doc_ids if s}))
+    payload = f"{value}|{int(bool(upper_bound))}|{sources}"
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:6]
+    return f"{table}:{program_id or '-'}:{kind}:{year if year is not None else '-'}:{pool_scope or '-'}:{digest}"
 
 
 class KaoyanQuery:
@@ -214,13 +245,64 @@ class KaoyanQuery:
             out[k] = {**r, "verified": bool(r["verified"]), "_methods": {r["extraction_method"]}}
         return list(out.values())
 
-    def _meta(self, r: dict[str, Any]) -> dict[str, Any]:
+    def _meta(
+        self,
+        r: dict[str, Any],
+        *,
+        table: str,
+        program_id: str | None,
+        kind: str,
+        value: Any,
+        upper_bound: bool = False,
+        pool_scope: str | None = None,
+    ) -> dict[str, Any]:
+        src_ids = list(r.get("_source_ids") or ([r.get("source_doc_id")] if r.get("source_doc_id") else []))
         return {
             "verified": r["verified"],
             "methods": sorted(r["_methods"], key=lambda m: METHOD_RANK.get(m, 9)),
             "evidence": (r.get("evidence_text") or "")[:_EVIDENCE_CHARS] or None,
             "source": self.source(r.get("source_doc_id"), r.get("page")),
+            "fact_id": make_fact_id(
+                table=table,
+                program_id=program_id,
+                kind=kind,
+                year=r.get("year"),
+                pool_scope=pool_scope if pool_scope is not None else r.get("pool_scope"),
+                value=value,
+                upper_bound=upper_bound,
+                source_doc_ids=src_ids,
+            ),
         }
+
+    def latest_year(self, metric: str | None = None, program_id: str | None = None) -> int | None:
+        """Newest intake year in the store for a metric, or across plans and score lines."""
+        table = _METRIC_TABLE.get(metric or "", "")
+        if table:
+            sql = f"SELECT MAX(year) AS y FROM {table}"
+            params: tuple[Any, ...] = ()
+            if program_id:
+                sql += " WHERE program_id = ?"
+                params = (program_id,)
+            row = self.store.query_one(sql, params)
+        else:
+            row = self.store.query_one(
+                "SELECT MAX(y) AS y FROM (SELECT year AS y FROM score_lines UNION ALL SELECT year FROM plans)"
+            )
+        y = row["y"] if row else None
+        return int(y) if y is not None else None
+
+    def resolve_year(
+        self, year: int | None, metric: str | None = None, program_id: str | None = None
+    ) -> int | None:
+        """User year, then settings.kaoyan_current_cycle, then latest year in the store."""
+        if year is not None:
+            return year
+        from kaoyan.config import get_settings
+
+        cycle = get_settings().kaoyan_current_cycle
+        if cycle:
+            return int(cycle)
+        return self.latest_year(metric, program_id)
 
     def plans(self, program_id: str, year: int | None = None) -> list[dict[str, Any]]:
         rows = self.store.query("SELECT * FROM plans WHERE program_id = ?", (program_id,))
@@ -237,7 +319,15 @@ class KaoyanQuery:
                 "upper_bound": bool(r["is_upper_bound"]),
                 "pool_scope": r["pool_scope"],
                 "definition": r["definition"],
-                **self._meta(r),
+                **self._meta(
+                    r,
+                    table="plans",
+                    program_id=program_id,
+                    kind=r["kind"],
+                    value=r["value"],
+                    upper_bound=bool(r["is_upper_bound"]),
+                    pool_scope=r["pool_scope"],
+                ),
             }
             if r["pool_scope"]:
                 fact["note"] = f"一级学科 {r['pool_scope']} 统筹合计，不是本专业单列人数"
@@ -268,7 +358,14 @@ class KaoyanQuery:
                 "subject2": r["subject2"],
                 "discipline_code": r["discipline_code"],
                 "definition": r["definition"],
-                **self._meta(r),
+                "value_text": str(r["total"]),
+                **self._meta(
+                    r,
+                    table="score_lines",
+                    program_id=row["id"],
+                    kind=r["scope"],
+                    value=r["total"],
+                ),
             }
             line["singles"] = singles_text(line)
             if r["scope"] == "school_baseline" and r["program_id"] is None:
@@ -295,7 +392,13 @@ class KaoyanQuery:
                     "status": r["status"],
                     "subjects": [],
                     "unknown_reason": r["unknown_reason"],
-                    **self._meta(r),
+                    **self._meta(
+                        r,
+                        table="exam_subjects",
+                        program_id=program_id,
+                        kind=r["status"],
+                        value=r.get("code") or r.get("unknown_reason") or r["status"],
+                    ),
                 },
             )
             if r["status"] == "known":
@@ -305,6 +408,16 @@ class KaoyanQuery:
         for g in out:
             g["codes"] = "/".join(s["code"] or "?" for s in g["subjects"])
             g["is_408"] = any(s["code"] == "408" for s in g["subjects"]) if g["status"] == "known" else None
+            g["value_text"] = g["codes"] or g.get("unknown_reason") or g["status"]
+            src = (g.get("source") or {}).get("doc_id")
+            g["fact_id"] = make_fact_id(
+                table="exam_subjects",
+                program_id=program_id,
+                kind=g["status"],
+                year=g["year"],
+                value=g["value_text"],
+                source_doc_ids=[src] if src else [],
+            )
         # identical subject lists from several documents: keep the first (seed) one
         seen: set[tuple[Any, ...]] = set()
         uniq = []
@@ -350,7 +463,15 @@ class KaoyanQuery:
                 "value": r["value"],
                 "pool_scope": r["pool_scope"],
                 "definition": r["definition"],
-                **self._meta(r),
+                "value_text": str(r["value"]),
+                **self._meta(
+                    r,
+                    table="admission_stats",
+                    program_id=program_id,
+                    kind=r["kind"],
+                    value=r["value"],
+                    pool_scope=r.get("pool_scope"),
+                ),
             }
             for r in sorted(merged, key=lambda x: (-x["year"], x["kind"]))
         ]
@@ -438,6 +559,18 @@ class KaoyanQuery:
     def program_facts(self, row: dict[str, Any], year: int | None = None) -> dict[str, Any]:
         plans = self.plans(row["id"], year)
         estimates, reasons = self.public_plan(plans)
+        for e in estimates:
+            src_ids = [s["doc_id"] for s in (e.get("sources") or []) if s and s.get("doc_id")]
+            e["fact_id"] = make_fact_id(
+                table="plans",
+                program_id=row["id"],
+                kind=e["basis"],
+                year=e["year"],
+                value=e["value"],
+                upper_bound=bool(e.get("lower_bound")),
+                source_doc_ids=src_ids,
+            )
+            e["value_text"] = e.get("text")
         return {
             **self.brief(row),
             "plans": plans,
@@ -466,7 +599,7 @@ class KaoyanQuery:
         keep = ("program_id", "school", "school_name", "college", "college_code", "code", "name",
                 "degree_type", "study_mode", "is_boundary", "public_plan_unknown", "notes")
         out = {k: facts[k] for k in keep}
-        plan_keys = ("kind", "label", "year", "value", "value_text", "upper_bound", "pool_scope", "note")
+        plan_keys = ("kind", "label", "year", "value", "value_text", "upper_bound", "pool_scope", "note", "fact_id")
         out["plans"] = [
             {**{k: p[k] for k in plan_keys if p.get(k) is not None},
              "source": p["source"] and {k: p["source"][k] for k in ("doc_id", "url", "page")}}
@@ -475,6 +608,7 @@ class KaoyanQuery:
         out["public_plan"] = [{**e, "sources": [slim(s) for s in e["sources"]]} for e in facts["public_plan"]]
         out["subjects"] = subj and {
             **{k: subj[k] for k in ("year", "status", "codes", "is_408", "unknown_reason")},
+            **{k: subj[k] for k in ("fact_id", "value_text") if subj.get(k)},
             "source": slim(subj["source"]),
         }
         return out
@@ -576,21 +710,24 @@ class KaoyanQuery:
         school: str | None = None,
         code: str | None = None,
         college: str | None = None,
-        year: int | None = 2026,
+        year: int | None = None,
         include_special: bool = True,
     ) -> dict[str, Any]:
         rows = self.find_programs(school=school, college=college, code=code)
         programs = []
+        latest = self.latest_year("score_lines")
+        latest_note = f"现有数据最新为 {latest} 年" if latest is not None else "库中暂无复试线"
         for row in rows:
             lines = [
                 ln for ln in self.score_lines(row, year) if include_special or not ln["scope"].startswith("special_")
             ]
             entry = {**self.brief(row), "lines": lines, "notes": row["notes"]}
             if not lines:
+                year_bit = f"{year} 年的" if year is not None else ""
                 entry["unknown"] = (
                     "目录注明仅招收推免生，没有统考复试线"
                     if self._no_exam(row["id"])
-                    else f"库中没有该专业 {year or ''} 年的复试线（现有数据最新为 2026 年）".replace("  ", " ")
+                    else f"库中没有该专业 {year_bit}复试线（{latest_note}）".replace("  ", " ")
                 )
             programs.append(entry)
         out: dict[str, Any] = {"year": year, "count": len(programs), "programs": programs}
