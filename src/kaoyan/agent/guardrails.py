@@ -45,16 +45,20 @@ KAOYAN_STRONG_HINTS = (
     "专硕", "学硕", "调剂", "分数线", "研招", "招多少", "考什么",
 )
 _KIND_HINTS: dict[str, tuple[str, ...]] = {
-    "score_line": ("复试线", "分数线", "国家线", "校线", "基本线", "多少分", "进复试"),
-    "plan": ("招多少", "招几", "多少人", "几个人", "计划", "名额", "统招", "统考招", "推免多少", "公开招考", "拟招"),
-    "subjects": ("考什么", "考不考", "考408", "考 408", "初试科目", "科目", "专业课", "考哪"),
-    "compare": ("对比", "比较", "相比", "vs", "VS"),
+    "score_line": ("复试线", "分数线", "国家线", "校线", "基本线", "多少分", "进复试", "单科线", "线多少"),
+    "plan": ("招多少", "招几", "招得", "多少人", "几个人", "计划", "名额", "统招", "统考招", "推免多少", "公开招考", "拟招", "目录"),
+    "subjects": ("考什么", "考不考", "考408", "考 408", "初试科目", "科目", "专业课", "考哪", "考数学", "数学考"),
+    "compare": ("对比", "比较", "相比", "差多少", "一样吗", "vs", "VS"),
     "filter": ("哪些", "筛选", "有哪些", "哪几个", "列出所有"),
     "directions": ("有没有", "方向"),
 }
 _PRIVACY_RE = re.compile(
-    r"(名单|录取|复试名单|拟录取).{0,12}(有没有|是否有|查|找|姓名|名字|编号|某某)|考生编号|准考证|姓名|个人成绩"
+    r"(名单|录取|复试名单|拟录取).{0,12}(有没有|是否有|查|找|姓名|名字|编号|某某)"
+    r"|考生编号|准考证|姓名|个人成绩|是谁|叫什么|名单上|他进复试|他考了|他被"
+    r"|叫[\u4e00-\u9fff]{2,4}的考生|同学.{0,40}他"
 )
+_COMPARE_TWO_RE = re.compile(r"各(?!占)|哪个.{0,12}(?:好考|更好|招得)|能直接比")
+FOUR_SCHOOLS = ("sysu", "scut", "jnu", "scnu")
 _THRESHOLD_RE = re.compile(
     r"(统招|统考|公开招考)[^0-9]{0,6}?(>=|≥|>|＞|大于等于|大于|超过|多于|不少于|至少)\s*(\d+)"
 )
@@ -62,6 +66,48 @@ _SKIP_SUBJECT_RE = re.compile(r"不(?:用|需要)?考\s*(\d{3}|数学[一二]?|�
 _SUBJECT_CODES = {"数学一": "301", "数学二": "302", "英语一": "201", "英语二": "204"}
 _NAME_KW_RE = re.compile(r"有没有([\u4e00-\u9fffA-Za-z]{2,12}?)(?:学硕|专硕|专业|方向|学位|[（(？?，,]|$)")
 _COLLEGE_PREFIX_STRIP = "的在查看问请帮我"
+
+
+_STRUCTURED_KINDS = {"score_line", "plan", "subjects", "compare", "filter"}
+
+
+def _infer_major_codes(text: str, schools: list[str], kinds: list[str]) -> tuple[list[str], list[str]]:
+    """Colloquial major names, only when the question writes no code of its own.
+
+    Bare 网安 and 软工 mean both the academic and the professional program, and only on a
+    structured question: a narrative aside ("中大网安复试机试算分吗") stays uncoded.
+    暨大 has no single 081200 program, so 计算机科学与技术学硕 there is the 0812 pool.
+    """
+    if not schools:
+        return [], []
+    structured = bool(set(kinds) & _STRUCTURED_KINDS)
+    found: list[str] = []
+
+    def add(code: str) -> None:
+        if code not in found:
+            found.append(code)
+
+    if re.search(r"网络空间安全学硕|网安学硕", text):
+        add("083900")
+    elif re.search(r"网安专硕|网络与信息安全", text):
+        add("085412")
+    elif "网安" in text and structured:
+        add("083900")
+        add("085412")
+    if "计科专硕" in text or "计算机专硕" in text:
+        add("085404")
+    if "软工专硕" in text:
+        add("085405")
+    elif re.search(r"软工(?!专硕|学硕)", text) and structured:
+        add("083500")
+        add("085405")
+    prefixes: list[str] = []
+    if "计算机科学与技术学硕" in text:
+        if schools == ["jnu"]:
+            prefixes.append("0812")
+        else:
+            add("081200")
+    return found, prefixes
 
 
 def _strip_school_aliases(text: str) -> str:
@@ -80,6 +126,8 @@ def detect_kaoyan_intent(goal: str) -> dict[str, Any]:
 
     text = goal or ""
     schools = find_schools(text)
+    if "四校" in text:
+        schools = list(dict.fromkeys([*schools, *FOUR_SCHOOLS]))
     codes = list(dict.fromkeys(PROGRAM_CODE_RE.findall(text)))
     masked = PROGRAM_CODE_RE.sub(" ", text)
     prefixes = [p for p in dict.fromkeys(DISCIPLINE_RE.findall(masked)) if not YEAR_RE.fullmatch(p)]
@@ -89,11 +137,28 @@ def detect_kaoyan_intent(goal: str) -> dict[str, Any]:
         if len(name) > 2:
             colleges.append(name)
     years = [int(y) for y in YEAR_RE.findall(text)]
-    is_kaoyan = bool(schools or codes or any(k in text for k in KAOYAN_STRONG_HINTS))
+    is_kaoyan = bool(schools or codes or any(k in text for k in KAOYAN_STRONG_HINTS) or "四校" in text)
 
     kinds = [k for k, hints in _KIND_HINTS.items() if any(h in text for h in hints)]
+    if "导师" in text and "filter" in kinds:
+        kinds.remove("filter")
+    if re.search(r"推免(?!面试)", text) and "plan" not in kinds:
+        kinds.append("plan")
+    if "非全" in text:
+        for kind in ("plan", "score_line"):
+            if kind not in kinds:
+                kinds.append(kind)
+    two_targets = len(schools) >= 2 or len(codes) >= 2
+    if "compare" not in kinds and (
+        (two_targets and _COMPARE_TWO_RE.search(text)) or ("最高" in text and "最低" in text)
+    ):
+        kinds.append("compare")
     if "四校" in text and "compare" not in kinds and ("复试线" in text or "计划" in text):
         kinds.append("compare")
+    if not codes and not prefixes:
+        extra_codes, extra_prefixes = _infer_major_codes(text, schools, kinds)
+        codes.extend(extra_codes)
+        prefixes.extend(extra_prefixes)
     privacy = bool(_PRIVACY_RE.search(text))
     if privacy:
         kinds.append("privacy")
@@ -139,7 +204,7 @@ def detect_kaoyan_intent(goal: str) -> dict[str, Any]:
         "codes": codes,
         "prefixes": prefixes,
         "colleges": colleges,
-        "year": years[0] if years else None,
+        "year": years[0] if len(years) == 1 else None,
         "kinds": kinds,
         "numeric": numeric,
         "privacy": privacy,
