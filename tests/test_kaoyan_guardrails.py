@@ -75,6 +75,23 @@ def test_study_mode_catalog_and_two_years() -> None:
     assert "subjects" in detect_kaoyan_intent("中大 085400 人工智能方向初试考数学几？")["kinds"]
 
 
+def test_colloquial_major_names_fill_codes_only_when_none_are_written() -> None:
+    assert detect_kaoyan_intent("中大网安学硕统考招几个人？")["codes"] == ["083900"]
+    assert detect_kaoyan_intent("中大网络空间安全学硕 2026 推免多少？")["codes"] == ["083900"]
+    both = detect_kaoyan_intent("暨南网安和中山网安复试线各多少？")
+    assert set(both["codes"]) == {"083900", "085412"}
+    assert detect_kaoyan_intent("中大 083900 网安学硕有调剂名额吗？")["codes"] == ["083900"]
+    assert detect_kaoyan_intent("中大网安复试机试算分吗")["codes"] == []
+    assert detect_kaoyan_intent("华师计科专硕今年统考招多少，复试线多少，考不考 408？")["codes"] == ["085404"]
+    assert detect_kaoyan_intent("华工软工专硕考不考 408，数学考几？")["codes"] == ["085405"]
+    assert set(detect_kaoyan_intent("中大软工今年能不能统考，推免占多少？")["codes"]) == {"083500", "085405"}
+    assert detect_kaoyan_intent("中山软工复试咋考的，同分怎么排")["codes"] == []
+    assert detect_kaoyan_intent("南方科技大学有计算机专硕吗？招多少？")["codes"] == []
+    jnu = detect_kaoyan_intent("暨大计算机科学与技术学硕 2027 推免多少？")
+    assert jnu["codes"] == [] and jnu["prefixes"] == ["0812"]
+    assert detect_kaoyan_intent("有个叫李明的考生在中大软件工程学院拟录取名单上吗？")["codes"] == []
+
+
 def test_detect_privacy() -> None:
     i = detect_kaoyan_intent("帮我查华工计算机学院拟录取名单里有没有某某某")
     assert i["privacy"] and "privacy" in i["kinds"] and i["name_kw"] is None

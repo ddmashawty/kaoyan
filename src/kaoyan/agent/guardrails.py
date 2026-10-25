@@ -68,6 +68,48 @@ _NAME_KW_RE = re.compile(r"有没有([\u4e00-\u9fffA-Za-z]{2,12}?)(?:学硕|专�
 _COLLEGE_PREFIX_STRIP = "的在查看问请帮我"
 
 
+_STRUCTURED_KINDS = {"score_line", "plan", "subjects", "compare", "filter"}
+
+
+def _infer_major_codes(text: str, schools: list[str], kinds: list[str]) -> tuple[list[str], list[str]]:
+    """Colloquial major names, only when the question writes no code of its own.
+
+    Bare 网安 and 软工 mean both the academic and the professional program, and only on a
+    structured question: a narrative aside ("中大网安复试机试算分吗") stays uncoded.
+    暨大 has no single 081200 program, so 计算机科学与技术学硕 there is the 0812 pool.
+    """
+    if not schools:
+        return [], []
+    structured = bool(set(kinds) & _STRUCTURED_KINDS)
+    found: list[str] = []
+
+    def add(code: str) -> None:
+        if code not in found:
+            found.append(code)
+
+    if re.search(r"网络空间安全学硕|网安学硕", text):
+        add("083900")
+    elif re.search(r"网安专硕|网络与信息安全", text):
+        add("085412")
+    elif "网安" in text and structured:
+        add("083900")
+        add("085412")
+    if "计科专硕" in text or "计算机专硕" in text:
+        add("085404")
+    if "软工专硕" in text:
+        add("085405")
+    elif re.search(r"软工(?!专硕|学硕)", text) and structured:
+        add("083500")
+        add("085405")
+    prefixes: list[str] = []
+    if "计算机科学与技术学硕" in text:
+        if schools == ["jnu"]:
+            prefixes.append("0812")
+        else:
+            add("081200")
+    return found, prefixes
+
+
 def _strip_school_aliases(text: str) -> str:
     from kaoyan.normalize import DEFAULT_SCHOOL_ALIASES
 
@@ -113,6 +155,10 @@ def detect_kaoyan_intent(goal: str) -> dict[str, Any]:
         kinds.append("compare")
     if "四校" in text and "compare" not in kinds and ("复试线" in text or "计划" in text):
         kinds.append("compare")
+    if not codes and not prefixes:
+        extra_codes, extra_prefixes = _infer_major_codes(text, schools, kinds)
+        codes.extend(extra_codes)
+        prefixes.extend(extra_prefixes)
     privacy = bool(_PRIVACY_RE.search(text))
     if privacy:
         kinds.append("privacy")
