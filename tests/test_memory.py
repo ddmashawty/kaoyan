@@ -40,3 +40,14 @@ def test_task_store_roundtrip(tmp_path: Path):
     store.append_turn("s1", "user", "q", task_id="t1")
     turns = store.session_history("s1")
     assert turns and turns[0]["role"] == "user"
+    store.save_slots("s1", {"schools": ["sysu"], "codes": ["085404"]})
+    assert store.load_slots("s1") == {"schools": ["sysu"], "codes": ["085404"]}
+    assert store.load_slots("missing") is None
+
+
+def test_session_memory_slots_clear_with_the_session():
+    mem = SessionMemory()
+    mem.set_slots("s1", {"schools": ["jnu"]})
+    assert mem.slots("s1") == {"schools": ["jnu"]}
+    mem.clear("s1")
+    assert mem.slots("s1") is None

@@ -1,7 +1,7 @@
 {
   "meta": {
     "date": "2026-10-25",
-    "commit": "198f741-dirty",
+    "commit": "733d186-dirty",
     "gold": "data/gold/kaoyan_eval_v2.jsonl",
     "splits": [],
     "rows": 183,
@@ -13,33 +13,33 @@
     "L0": {
       "summary": {
         "rows": 183,
-        "exact": 0.9344,
-        "schools": 0.9781,
-        "codes": 0.9399,
-        "year": 0.9891,
+        "exact": 0.9891,
+        "schools": 0.9945,
+        "codes": 1.0,
+        "year": 1.0,
         "operation": 1.0,
-        "metrics": 0.9464,
+        "metrics": 0.9911,
         "privacy": 1.0
       },
       "by_split": {
         "adversarial": {
           "rows": 80,
-          "exact": 0.875,
-          "schools": 0.9625,
-          "codes": 0.875,
-          "year": 0.975,
+          "exact": 0.9875,
+          "schools": 0.9875,
+          "codes": 1.0,
+          "year": 1.0,
           "operation": 1.0,
-          "metrics": 0.931,
+          "metrics": 1.0,
           "privacy": 1.0
         },
         "dev": {
           "rows": 103,
-          "exact": 0.9806,
-          "schools": 0.9903,
-          "codes": 0.9903,
+          "exact": 0.9903,
+          "schools": 1.0,
+          "codes": 1.0,
           "year": 1.0,
           "operation": 1.0,
-          "metrics": 0.963,
+          "metrics": 0.9815,
           "privacy": 1.0
         }
       },
@@ -76,12 +76,12 @@
         },
         "cross_school": {
           "rows": 10,
-          "exact": 0.0,
-          "schools": 0.7,
-          "codes": 0.0,
-          "year": 0.8,
+          "exact": 0.9,
+          "schools": 0.9,
+          "codes": 1.0,
+          "year": 1.0,
           "operation": 1.0,
-          "metrics": 0.4286,
+          "metrics": 1.0,
           "privacy": 1.0
         },
         "doc_only": {
@@ -96,12 +96,12 @@
         },
         "false_premise": {
           "rows": 5,
-          "exact": 0.6,
-          "schools": 0.8,
-          "codes": 0.8,
+          "exact": 0.8,
+          "schools": 1.0,
+          "codes": 1.0,
           "year": 1.0,
           "operation": 1.0,
-          "metrics": 0.6,
+          "metrics": 0.8,
           "privacy": 1.0
         },
         "missing_field": {
@@ -639,52 +639,11 @@
   },
   "known_failures": {
     "L0": {
-      "adv-cross-01": [
-        "codes",
-        "metrics",
-        "year"
-      ],
-      "adv-cross-02": [
-        "codes"
-      ],
-      "adv-cross-03": [
-        "codes"
-      ],
       "adv-cross-04": [
-        "codes",
-        "metrics",
         "schools"
-      ],
-      "adv-cross-05": [
-        "codes",
-        "metrics",
-        "year"
-      ],
-      "adv-cross-06": [
-        "codes",
-        "schools"
-      ],
-      "adv-cross-07": [
-        "codes",
-        "metrics"
-      ],
-      "adv-cross-08": [
-        "codes",
-        "schools"
-      ],
-      "adv-cross-09": [
-        "codes"
-      ],
-      "adv-cross-10": [
-        "codes"
       ],
       "sup-31": [
         "metrics"
-      ],
-      "sup-32": [
-        "codes",
-        "metrics",
-        "schools"
       ]
     },
     "L1": {
