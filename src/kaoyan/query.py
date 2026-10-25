@@ -304,6 +304,57 @@ class KaoyanQuery:
             return int(cycle)
         return self.latest_year(metric, program_id)
 
+    def data_gaps(
+        self,
+        *,
+        schools: list[str] | None = None,
+        codes: list[str] | None = None,
+        prefixes: list[str] | None = None,
+        year: int | None = None,
+        metrics: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Known holes (blocked catalog, unpublished year, pooled plan, 仅招推免, boundary)."""
+        sql = (
+            "SELECT g.*, p.code, p.name AS program_name, s.name AS school_name, s.short_name "
+            "FROM data_gaps g "
+            "JOIN schools s ON s.id = g.school_id "
+            "LEFT JOIN programs p ON p.id = g.program_id "
+            "WHERE 1=1"
+        )
+        params: list[Any] = []
+        if schools:
+            ids = [self.school_id(x) or x for x in schools]
+            sql += f" AND g.school_id IN ({','.join('?' for _ in ids)})"
+            params.extend(ids)
+        needles = [c for c in (codes or []) + (prefixes or []) if c]
+        if needles:
+            clauses = ["g.program_id IS NULL"]
+            for n in needles:
+                clauses.append("p.code LIKE ?")
+                params.append(n + "%" if len(n) < 6 else n)
+            sql += " AND (" + " OR ".join(clauses) + ")"
+        if year is not None:
+            sql += " AND (g.year IS NULL OR g.year = ?)"
+            params.append(year)
+        if metrics:
+            sql += f" AND g.metric IN ({','.join('?' for _ in metrics)})"
+            params.extend(metrics)
+        sql += " ORDER BY g.school_id, g.program_id, g.year, g.metric, g.status"
+        return self.store.query(sql, tuple(params))
+
+    @staticmethod
+    def format_gap(gap: dict[str, Any]) -> str:
+        metric = {"catalog": "目录人数", "subjects": "初试科目", "score_line": "复试线", "plan": "招生计划"}.get(
+            gap["metric"], gap["metric"]
+        )
+        year = f"{gap['year']} 年 " if gap.get("year") else ""
+        who = " ".join(p for p in (gap.get("school_name"), gap.get("code")) if p)
+        prefix = f"{who} " if who else ""
+        verify = f"；去 {gap['verify_at']} 核实" if gap.get("verify_at") else ""
+        if gap["status"] in {"blocked", "not_published"}:
+            return f"官方资料中未取得 — {prefix}{year}{metric}：{gap['reason']}{verify}"
+        return f"{prefix}{year}{metric}：{gap['reason']}{verify}"
+
     def plans(self, program_id: str, year: int | None = None) -> list[dict[str, Any]]:
         rows = self.store.query("SELECT * FROM plans WHERE program_id = ?", (program_id,))
         rows = [r for r in rows if year is None or r["year"] == year]

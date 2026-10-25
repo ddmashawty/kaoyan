@@ -149,6 +149,20 @@ CREATE TABLE IF NOT EXISTS admission_stats (
     verified INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS data_gaps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    school_id TEXT NOT NULL REFERENCES schools(id),
+    program_id TEXT REFERENCES programs(id),
+    year INTEGER,
+    metric TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    verify_at TEXT,
+    source_doc_id TEXT REFERENCES documents(id),
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_data_gaps_school ON data_gaps(school_id, year, metric);
+
 CREATE TABLE IF NOT EXISTS crawl_runs (
     id TEXT PRIMARY KEY,
     started_at TEXT NOT NULL,
