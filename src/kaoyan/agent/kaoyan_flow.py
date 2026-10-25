@@ -19,6 +19,7 @@ from kaoyan.agent.guardrails import (
 )
 from kaoyan.agent.prompts import KAOYAN_FINAL_SYSTEM, KAOYAN_RETRY_PROMPT
 from kaoyan.config import get_settings
+from kaoyan.query import KaoyanQuery
 from kaoyan.render import lookup_template, render_placeholders
 from kaoyan.tools import kaoyan as ky
 
@@ -160,6 +161,15 @@ def has_structured_evidence(results: list[dict[str, Any]]) -> bool:
     return False
 
 
+_KIND_METRICS = {
+    "score_line": ("score_line",),
+    "plan": ("plan", "catalog"),
+    "subjects": ("subjects",),
+    "compare": ("plan", "catalog", "score_line", "subjects"),
+    "filter": ("plan", "catalog", "subjects"),
+}
+
+
 def gap_notes(intent: dict[str, Any], results: list[dict[str, Any]]) -> list[str]:
     notes: list[str] = []
     outs = structured_results(results)
@@ -174,6 +184,27 @@ def gap_notes(intent: dict[str, Any], results: list[dict[str, Any]]) -> list[str
         notes.append("结构化库中没有匹配的专业（数据范围：中大/华工/暨大/华师 计算机类 37 个专业）。")
     if intent.get("privacy"):
         notes.append("用户在查名单中的个人：" + PRIVACY_NOTICE)
+    kinds = set(intent.get("kinds") or [])
+    metrics = list(dict.fromkeys(m for k in kinds for m in _KIND_METRICS.get(k, ())))
+    try:
+        gaps = ky.get_query().data_gaps(
+            schools=intent.get("schools") or None,
+            codes=intent.get("codes") or None,
+            prefixes=intent.get("prefixes") or None,
+            year=want,
+            metrics=metrics or None,
+        )
+    except Exception:
+        gaps = []
+    seen: set[str] = set()
+    for gap in gaps:
+        text = KaoyanQuery.format_gap(gap)
+        if text in seen:
+            continue
+        seen.add(text)
+        notes.append(text)
+        if len(notes) >= 10:
+            break
     return notes
 
 

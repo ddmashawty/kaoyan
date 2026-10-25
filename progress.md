@@ -1,5 +1,11 @@
 # 进度日志
 
+## 会话：2026-10-25（P2 数据缺口表）
+
+- **状态：** 分支 `p2/data-gaps`，从已合 #12/#13 的 main 开
+- **做了：** `data_gaps` 表，种子从备注和 sources.json 填充；`gap_notes` 改查这张表。没有调用 DeepSeek
+- **记录：** `docs/kaoyan_p1_notes.md`「P2 数据缺口表」
+
 ## 会话：2026-10-25（P2 事实绑定）
 
 - **状态：** 分支 `p2/fact-bind`，接到已合 #12 的 main 上

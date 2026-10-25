@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from kaoyan.db import KaoyanStore
-from kaoyan.seed import NoteFact, extract_note_facts, seed_kaoyan
+from kaoyan.seed import NoteFact, extract_note_facts, extract_note_gaps, extract_source_gaps, seed_kaoyan
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "kaoyan"
 
@@ -279,7 +279,64 @@ def test_golden_qa_sources_resolve(store: KaoyanStore) -> None:
 
 
 def test_seed_is_idempotent(store: KaoyanStore) -> None:
-    tables = ("programs", "documents", "plans", "score_lines", "admission_stats", "exam_subjects", "directions")
+    tables = ("programs", "documents", "plans", "score_lines", "admission_stats", "exam_subjects", "directions", "data_gaps")
     before = {t: store.count(t) for t in tables}
     seed_kaoyan(store, DATA_DIR)
     assert {t: store.count(t) for t in tables} == before
+
+
+def test_extract_note_gaps_from_remarks() -> None:
+    scut = extract_note_gaps(
+        "2027简章/目录截至2026-09-25未发布；2026目录在yanzhao.scut.edu.cn被统一认证网关拦截，因此总招生人数和初试科目未从官方目录读到，均留空。",
+        is408="未知（目录不可达）",
+        has_subjects=False, has_catalog=False,
+    )
+    assert {g.status for g in scut} == {"not_published", "blocked"}
+    assert {g.metric for g in scut if g.status == "blocked"} == {"catalog", "subjects"}
+    assert any(g.school_level and g.year == 2027 for g in scut)
+    with_subjects = extract_note_gaps(
+        "2026目录在yanzhao.scut.edu.cn被统一认证网关拦截",
+        has_subjects=True, has_catalog=False,
+    )
+    assert {g.metric for g in with_subjects if g.status == "blocked"} == {"catalog"}
+    jnu = extract_note_gaps("计算机科学与技术一级学科统筹，2027目录只给出0812合计24人，不分二级学科", code="081203")
+    assert any(g.status == "pooled" and g.metric == "plan" and g.year == 2027 for g in jnu)
+    tm = extract_note_gaps("目录注明“仅招收推免生”，无统考科目、无复试线。", is408="否（仅招推免）")
+    assert {g.metric for g in tm if g.status == "tm_only"} == {"subjects", "score_line"}
+    edge = extract_note_gaps("【边界项，非典型计算机类】仅“10人工智能”方向与计算机相关")
+    assert any(g.status == "boundary" for g in edge)
+
+
+def test_extract_source_gaps_scut_catalog() -> None:
+    school = {
+        "id": "scut",
+        "catalog_systems": [{
+            "url": "https://yanzhao.scut.edu.cn/open/Master/Zsml_view.aspx",
+            "year": 2026,
+            "status": "blocked: 302 到 /rump_frontend/login 统一认证网关",
+        }],
+        "access_issues": ["yanzhao.scut.edu.cn 整站从采集机 302 到统一认证登录"],
+        "last_year_publish_hint": "2027 目录已发布；2027 简章未发布",
+    }
+    gaps = extract_source_gaps(school)
+    assert any(g.status == "blocked" and g.metric == "catalog" and g.year == 2026 and g.verify_at for g in gaps)
+    assert any(g.status == "not_published" and g.year == 2027 for g in gaps)
+
+
+def test_seeded_data_gaps(store: KaoyanStore) -> None:
+    from kaoyan.query import KaoyanQuery
+
+    q = KaoyanQuery(store)
+    assert store.count("data_gaps") >= 8
+    scut = q.data_gaps(schools=["scut"], year=2026, metrics=["catalog", "subjects"])
+    assert any(g["status"] == "blocked" and g["metric"] == "catalog" and g["program_id"] is None for g in scut)
+    assert any(g["status"] == "blocked" and g["metric"] == "subjects" and g.get("code") == "085404" for g in scut)
+    assert not any(g["metric"] == "subjects" and g.get("code") == "140500" for g in scut)
+    jnu = q.data_gaps(schools=["jnu"], codes=["081203"], metrics=["plan"])
+    assert any(g["status"] == "pooled" for g in jnu)
+    tm = q.data_gaps(schools=["sysu"], codes=["083900"], metrics=["subjects"])
+    assert any(g["status"] == "tm_only" for g in tm)
+    edge = q.data_gaps(schools=["sysu"], codes=["085400"], metrics=["plan"])
+    assert any(g["status"] == "boundary" for g in edge)
+    text = KaoyanQuery.format_gap(next(g for g in scut if g["status"] == "blocked" and g["metric"] == "catalog"))
+    assert "官方资料中未取得" in text and "统一认证" in text

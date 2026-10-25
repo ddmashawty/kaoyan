@@ -91,6 +91,15 @@ def test_privacy_question_gets_notice_and_no_rag(kaoyan_env) -> None:
     assert "个人信息" in r["answer"] and "36" in r["answer"]
 
 
+def test_data_gaps_reach_the_prompt(kaoyan_env) -> None:
+    model = kaoyan_env(FakeModel("官方资料中未取得初试科目。"))
+    r = run_agent("华工 085404 初试考什么？", persist=False)
+    notes = " ".join(r["facts"].get("notes") or [])
+    assert "统一认证" in notes
+    if model.calls:
+        assert "统一认证" in model.calls[0][1].content
+
+
 def test_missing_year_note_reaches_model(kaoyan_env) -> None:
     model = kaoyan_env(FakeModel("官方资料中未取得 2027 年人数；2026 目录 210。"))
     r = run_agent("中大 2027 年 085404 招多少人？", persist=False)

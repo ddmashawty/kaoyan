@@ -20,6 +20,7 @@ from kaoyan.db import KaoyanStore
 from kaoyan.models import (
     AdmissionStat,
     College,
+    DataGap,
     Direction,
     Document,
     ExamSubject,
@@ -225,6 +226,99 @@ def _sentence_with(note: str, needles: tuple[str, ...], must: tuple[str, ...] = 
     return None
 
 
+@dataclass(frozen=True)
+class NoteGap:
+    metric: str
+    status: str
+    reason: str
+    year: int | None = None
+    verify_at: str | None = None
+    school_level: bool = False
+
+
+def _first_url(text: str) -> str | None:
+    m = re.search(r"https?://[^\s）)】,，;；]+", text)
+    return m.group(0).rstrip("。.)）") if m else None
+
+
+def extract_note_gaps(
+    note: str,
+    *,
+    code: str = "",
+    is408: str = "",
+    has_subjects: bool = False,
+    has_catalog: bool = False,
+) -> list[NoteGap]:
+    """Gaps stated in 备注 / 是否408. School-wide phrases are marked school_level."""
+    gaps: list[NoteGap] = []
+    if not note and not is408:
+        return gaps
+
+    unpublished = _sentence_with(note, ("未发布",))
+    if unpublished:
+        ym = re.search(r"(20\d{2})", unpublished)
+        gaps.append(NoteGap(
+            metric="catalog", status="not_published", reason=unpublished,
+            year=int(ym.group(1)) if ym else None,
+            verify_at=_first_url(unpublished),
+            school_level="简章" in unpublished or "目录截至" in unpublished,
+        ))
+
+    blocked = _sentence_with(note, ("拦截", "统一认证"))
+    if blocked:
+        url = _first_url(blocked) or _first_url(note)
+        year_m = re.search(r"(20\d{2})目录", blocked) or re.search(r"(20\d{2})", blocked)
+        year = int(year_m.group(1)) if year_m else None
+        if not has_catalog:
+            gaps.append(NoteGap(metric="catalog", status="blocked", reason=blocked, year=year, verify_at=url))
+        if not has_subjects:
+            gaps.append(NoteGap(metric="subjects", status="blocked", reason=blocked, year=year, verify_at=url))
+
+    pooled = _sentence_with(note, ("一级学科统筹", "不分二级学科", "二级学科不单列"))
+    if pooled and (code.startswith("0812") or "0812" in pooled):
+        ym = re.search(r"(20\d{2})", pooled)
+        gaps.append(NoteGap(
+            metric="plan", status="pooled", reason=pooled,
+            year=int(ym.group(1)) if ym else None,
+        ))
+
+    tm = _sentence_with(note, ("仅招收推免", "仅招推免")) or ("仅招推免" in is408 and "仅招收推免生，无统考科目")
+    if tm:
+        reason = tm if isinstance(tm, str) else "仅招收推免生，无统考科目"
+        gaps.append(NoteGap(metric="subjects", status="tm_only", reason=reason))
+        gaps.append(NoteGap(metric="score_line", status="tm_only", reason=reason))
+
+    boundary = _sentence_with(note, ("边界项",))
+    if boundary:
+        gaps.append(NoteGap(metric="plan", status="boundary", reason=boundary))
+    return gaps
+
+
+def extract_source_gaps(school: dict[str, Any]) -> list[NoteGap]:
+    """School-level gaps from sources.json (catalog_systems + publish hint)."""
+    gaps: list[NoteGap] = []
+    for system in school.get("catalog_systems") or []:
+        status = str(system.get("status") or "")
+        if not status.startswith("blocked"):
+            continue
+        reason = status.split(":", 1)[-1].strip() or status
+        issues = "；".join(school.get("access_issues") or [])
+        if "统一认证" in issues or "拦截" in issues:
+            reason = _sentence_with(issues, ("统一认证", "拦截")) or reason
+        gaps.append(NoteGap(
+            metric="catalog", status="blocked", reason=reason,
+            year=system.get("year"), verify_at=system.get("url"), school_level=True,
+        ))
+    hint = school.get("last_year_publish_hint") or ""
+    if "未发布" in hint:
+        ym = re.search(r"(20\d{2})", hint)
+        gaps.append(NoteGap(
+            metric="catalog", status="not_published", reason=hint,
+            year=int(ym.group(1)) if ym else None, school_level=True,
+        ))
+    return gaps
+
+
 @dataclass
 class Bundle:
     data_dir: Path
@@ -280,6 +374,9 @@ class Seeder:
         self.seed_only: dict[str, dict[str, Any]] = {}
         self._baselines: set[tuple[str, str | None, int]] = set()
         self._fact_keys: set[tuple[Any, ...]] = set()
+        stamp = str(self.bundle.meta.get("collected_at") or "")
+        m = re.match(r"(20\d{2}-\d{2}-\d{2})", stamp)
+        self._gap_stamp = m.group(1) if m else "2026-09-25"
 
     # -- colleges ---------------------------------------------------------
 
@@ -625,9 +722,36 @@ class Seeder:
                     program_id=program_id, year=f.year, kind=f.kind, value=f.value, pool_scope=f.pool_scope,
                     definition=f.definition, source_doc_id=src, evidence_text=f.evidence, **note_seed))
 
+        for gap in extract_note_gaps(
+            note, code=code, is408=row["是否408"],
+            has_subjects=any(subjects), has_catalog=not total.is_empty,
+        ):
+            self.add_gap(conn, DataGap(
+                school_id=school_id,
+                program_id=None if gap.school_level else program_id,
+                year=gap.year, metric=gap.metric, status=gap.status, reason=gap.reason,
+                verify_at=gap.verify_at, updated_at=self._gap_stamp,
+            ))
+
+    def add_gap(self, conn: Any, gap: DataGap) -> None:
+        key = ("gap", gap.school_id, gap.program_id, gap.year, gap.metric, gap.status)
+        if self._once(key):
+            self.store.insert(conn, "data_gaps", gap)
+            self.report.data_gaps += 1
+
+    def seed_source_gaps(self, conn: Any) -> None:
+        for school in self.bundle.schools:
+            for gap in extract_source_gaps(school):
+                self.add_gap(conn, DataGap(
+                    school_id=school["id"], program_id=None,
+                    year=gap.year, metric=gap.metric, status=gap.status, reason=gap.reason,
+                    verify_at=gap.verify_at, updated_at=self._gap_stamp,
+                ))
+
     def run(self) -> SeedReport:
         with self.store.transaction() as conn:
             self.store.delete_seed_facts(conn)
+            conn.execute("DELETE FROM data_gaps")
             conn.execute("DELETE FROM documents WHERE status = 'seed_only'")
             for s in self.bundle.schools:
                 self.store.upsert(conn, "schools", School(
@@ -638,6 +762,7 @@ class Seeder:
                 if school_id:
                     self.ensure_college(conn, school_id, row["学院"])
             self.load_documents(conn)
+            self.seed_source_gaps(conn)
             for row in self.bundle.rows:
                 self.seed_row(conn, row)
         r = self.report

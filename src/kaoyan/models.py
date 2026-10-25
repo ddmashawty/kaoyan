@@ -156,6 +156,18 @@ class AdmissionStat(BaseModel):
     verified: bool = False
 
 
+class DataGap(BaseModel):
+    school_id: str
+    program_id: str | None = None
+    year: int | None = None
+    metric: str
+    status: str
+    reason: str
+    verify_at: str | None = None
+    source_doc_id: str | None = None
+    updated_at: str
+
+
 class SeedReport(BaseModel):
     schools: int = 0
     colleges: int = 0
@@ -166,5 +178,6 @@ class SeedReport(BaseModel):
     plans: int = 0
     score_lines: int = 0
     admission_stats: int = 0
+    data_gaps: int = 0
     seed_only_documents: int = 0
     warnings: list[str] = Field(default_factory=list)
