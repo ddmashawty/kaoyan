@@ -1,7 +1,7 @@
 {
   "meta": {
-    "date": "2026-10-16",
-    "commit": "f7320ce-dirty",
+    "date": "2026-10-25",
+    "commit": "198f741-dirty",
     "gold": "data/gold/kaoyan_eval_v2.jsonl",
     "splits": [],
     "rows": 183,
@@ -13,65 +13,65 @@
     "L0": {
       "summary": {
         "rows": 183,
-        "exact": 0.7268,
-        "schools": 0.9508,
-        "codes": 0.8907,
-        "year": 0.9781,
-        "operation": 0.9399,
-        "metrics": 0.8304,
-        "privacy": 0.9781
+        "exact": 0.9344,
+        "schools": 0.9781,
+        "codes": 0.9399,
+        "year": 0.9891,
+        "operation": 1.0,
+        "metrics": 0.9464,
+        "privacy": 1.0
       },
       "by_split": {
         "adversarial": {
           "rows": 80,
-          "exact": 0.625,
-          "schools": 0.95,
-          "codes": 0.8375,
-          "year": 0.95,
-          "operation": 0.9625,
-          "metrics": 0.7931,
-          "privacy": 0.95
+          "exact": 0.875,
+          "schools": 0.9625,
+          "codes": 0.875,
+          "year": 0.975,
+          "operation": 1.0,
+          "metrics": 0.931,
+          "privacy": 1.0
         },
         "dev": {
           "rows": 103,
-          "exact": 0.8058,
-          "schools": 0.9515,
-          "codes": 0.932,
+          "exact": 0.9806,
+          "schools": 0.9903,
+          "codes": 0.9903,
           "year": 1.0,
-          "operation": 0.9223,
-          "metrics": 0.8704,
+          "operation": 1.0,
+          "metrics": 0.963,
           "privacy": 1.0
         }
       },
       "by_trap": {
         "aggregate": {
           "rows": 4,
-          "exact": 0.25,
-          "schools": 0.5,
+          "exact": 1.0,
+          "schools": 1.0,
           "codes": 1.0,
           "year": 1.0,
-          "operation": 0.75,
-          "metrics": 0.75,
+          "operation": 1.0,
+          "metrics": 1.0,
           "privacy": 1.0
         },
         "boundary": {
           "rows": 10,
-          "exact": 0.7,
+          "exact": 1.0,
           "schools": 1.0,
           "codes": 1.0,
-          "year": 0.9,
+          "year": 1.0,
           "operation": 1.0,
-          "metrics": 0.8,
+          "metrics": 1.0,
           "privacy": 1.0
         },
         "colloquial": {
           "rows": 6,
-          "exact": 0.0,
+          "exact": 1.0,
           "schools": 1.0,
-          "codes": 0.3333,
+          "codes": 1.0,
           "year": 1.0,
-          "operation": 0.6667,
-          "metrics": 0.6667,
+          "operation": 1.0,
+          "metrics": 1.0,
           "privacy": 1.0
         },
         "cross_school": {
@@ -86,11 +86,11 @@
         },
         "doc_only": {
           "rows": 20,
-          "exact": 0.9,
+          "exact": 1.0,
           "schools": 1.0,
           "codes": 1.0,
           "year": 1.0,
-          "operation": 0.9,
+          "operation": 1.0,
           "metrics": null,
           "privacy": 1.0
         },
@@ -100,27 +100,27 @@
           "schools": 0.8,
           "codes": 0.8,
           "year": 1.0,
-          "operation": 0.8,
+          "operation": 1.0,
           "metrics": 0.6,
           "privacy": 1.0
         },
         "missing_field": {
           "rows": 7,
-          "exact": 0.7143,
+          "exact": 1.0,
           "schools": 1.0,
-          "codes": 0.7143,
+          "codes": 1.0,
           "year": 1.0,
-          "operation": 0.8571,
+          "operation": 1.0,
           "metrics": null,
           "privacy": 1.0
         },
         "no_exam": {
           "rows": 10,
-          "exact": 0.6,
-          "schools": 0.9,
-          "codes": 0.8,
+          "exact": 1.0,
+          "schools": 1.0,
+          "codes": 1.0,
           "year": 1.0,
-          "operation": 0.9,
+          "operation": 1.0,
           "metrics": 1.0,
           "privacy": 1.0
         },
@@ -136,43 +136,43 @@
         },
         "policy": {
           "rows": 3,
-          "exact": 0.3333,
+          "exact": 1.0,
           "schools": 1.0,
           "codes": 1.0,
           "year": 1.0,
           "operation": 1.0,
-          "metrics": 0.0,
+          "metrics": 1.0,
           "privacy": 1.0
         },
         "pool": {
           "rows": 10,
-          "exact": 0.6,
+          "exact": 1.0,
           "schools": 1.0,
-          "codes": 0.9,
-          "year": 0.9,
-          "operation": 0.8,
-          "metrics": 0.8571,
+          "codes": 1.0,
+          "year": 1.0,
+          "operation": 1.0,
+          "metrics": 1.0,
           "privacy": 1.0
         },
         "prediction": {
           "rows": 3,
-          "exact": 0.6667,
+          "exact": 1.0,
           "schools": 1.0,
           "codes": 1.0,
           "year": 1.0,
-          "operation": 0.6667,
+          "operation": 1.0,
           "metrics": 1.0,
           "privacy": 1.0
         },
         "privacy": {
           "rows": 10,
-          "exact": 0.6,
+          "exact": 1.0,
           "schools": 1.0,
           "codes": 1.0,
           "year": 1.0,
           "operation": 1.0,
           "metrics": null,
-          "privacy": 0.6
+          "privacy": 1.0
         },
         "routing": {
           "rows": 3,
@@ -186,22 +186,22 @@
         },
         "upper_bound": {
           "rows": 10,
-          "exact": 0.6,
+          "exact": 1.0,
           "schools": 1.0,
           "codes": 1.0,
           "year": 1.0,
           "operation": 1.0,
-          "metrics": 0.6,
+          "metrics": 1.0,
           "privacy": 1.0
         },
         "year": {
           "rows": 10,
-          "exact": 0.9,
+          "exact": 1.0,
           "schools": 1.0,
           "codes": 1.0,
           "year": 1.0,
           "operation": 1.0,
-          "metrics": 0.9,
+          "metrics": 1.0,
           "privacy": 1.0
         }
       }
@@ -639,27 +639,6 @@
   },
   "known_failures": {
     "L0": {
-      "v1-12": [
-        "schools"
-      ],
-      "v1-18": [
-        "schools"
-      ],
-      "adv-priv-01": [
-        "privacy"
-      ],
-      "adv-priv-03": [
-        "privacy"
-      ],
-      "adv-priv-04": [
-        "privacy"
-      ],
-      "adv-priv-10": [
-        "privacy"
-      ],
-      "adv-year-03": [
-        "metrics"
-      ],
       "adv-cross-01": [
         "codes",
         "metrics",
@@ -699,112 +678,13 @@
       "adv-cross-10": [
         "codes"
       ],
-      "adv-ub-03": [
-        "metrics"
-      ],
-      "adv-ub-08": [
-        "metrics"
-      ],
-      "adv-ub-09": [
-        "metrics"
-      ],
-      "adv-ub-10": [
-        "metrics"
-      ],
-      "adv-pool-06": [
-        "codes"
-      ],
-      "adv-pool-07": [
-        "metrics",
-        "operation"
-      ],
-      "adv-pool-08": [
-        "year"
-      ],
-      "adv-pool-09": [
-        "operation"
-      ],
-      "adv-bd-06": [
-        "year"
-      ],
-      "adv-bd-07": [
-        "metrics"
-      ],
-      "adv-bd-10": [
-        "metrics"
-      ],
-      "adv-noexam-02": [
-        "codes"
-      ],
-      "adv-noexam-05": [
-        "operation"
-      ],
-      "adv-noexam-06": [
-        "codes"
-      ],
-      "adv-noexam-07": [
-        "schools"
-      ],
-      "sup-01": [
-        "codes"
-      ],
-      "sup-02": [
-        "codes"
-      ],
-      "sup-04": [
-        "codes",
-        "operation"
-      ],
-      "sup-05": [
-        "operation"
-      ],
-      "sup-07": [
-        "codes",
-        "metrics"
-      ],
-      "sup-08": [
-        "codes"
-      ],
-      "sup-10": [
-        "codes",
-        "operation"
-      ],
-      "sup-17": [
-        "metrics"
-      ],
-      "sup-18": [
-        "metrics"
-      ],
-      "sup-26": [
-        "operation"
-      ],
       "sup-31": [
-        "metrics",
-        "operation"
+        "metrics"
       ],
       "sup-32": [
         "codes",
         "metrics",
         "schools"
-      ],
-      "sup-33": [
-        "schools"
-      ],
-      "sup-34": [
-        "operation"
-      ],
-      "sup-36": [
-        "metrics",
-        "schools"
-      ],
-      "doc-19": [
-        "metrics"
-      ],
-      "doc-26": [
-        "operation"
-      ],
-      "doc-28": [
-        "operation"
       ]
     },
     "L1": {
