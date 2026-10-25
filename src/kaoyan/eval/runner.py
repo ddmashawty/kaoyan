@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from kaoyan.agent.guardrails import detect_kaoyan_intent
+from kaoyan.agent.guardrails import detect_kaoyan_intent, detect_kaoyan_turns
 from kaoyan.eval.metrics import intent_fields, match_fact, ratio, tool_facts
 from kaoyan.eval.retrieval import known_misses, render_l2
 
@@ -64,7 +64,7 @@ def _l0_summary(per_row: list[dict[str, Any]]) -> dict[str, Any]:
 def run_l0(rows: list[dict[str, Any]]) -> dict[str, Any]:
     per_row = []
     for row in rows:
-        predicted = detect_kaoyan_intent(row["turns"][-1])
+        predicted = detect_kaoyan_turns(row["turns"])
         fields = intent_fields(row["expected_intent"], predicted, row.get("expected_refusal"))
         per_row.append({
             "id": row["id"],

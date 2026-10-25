@@ -120,7 +120,54 @@ def _strip_school_aliases(text: str) -> str:
     return out
 
 
-def detect_kaoyan_intent(goal: str) -> dict[str, Any]:
+_INHERIT_KINDS = ("score_line", "plan", "subjects")
+
+
+def inherit_intent(current: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, Any]:
+    """Fill schools, codes, year and metric kinds the follow-up left out. This turn wins.
+
+    Colleges are not copied: 「那中大呢」 after 暨大信息学院 must not keep 信息学院.
+    compare / filter stay off: a follow-up is a lookup of one of the previous targets.
+    """
+    if not previous:
+        return current
+    out = {**current, "filters": dict(current.get("filters") or {})}
+    inherited: list[str] = []
+    if not out["schools"] and previous.get("schools"):
+        out["schools"] = list(previous["schools"])
+        inherited.append("schools")
+    if not out["codes"] and not out["prefixes"] and (previous.get("codes") or previous.get("prefixes")):
+        out["codes"] = list(previous.get("codes") or [])
+        out["prefixes"] = list(previous.get("prefixes") or [])
+        inherited.append("codes")
+    if out["year"] is None and previous.get("year") is not None and (
+        "codes" in inherited or out["codes"] == list(previous.get("codes") or [])
+    ):
+        out["year"] = previous["year"]
+        inherited.append("year")
+    asked = set(out["kinds"]) & {"score_line", "plan", "subjects", "compare", "filter"}
+    prev_metrics = [k for k in previous.get("kinds") or [] if k in _INHERIT_KINDS]
+    if not asked and prev_metrics:
+        keep = [k for k in out["kinds"] if k in {"privacy", "export"}]
+        out["kinds"] = list(dict.fromkeys([*prev_metrics, *keep]))
+        inherited.append("kinds")
+    if inherited:
+        out["follow_up"] = True
+        out["inherited"] = inherited
+        out["is_kaoyan"] = bool(out["is_kaoyan"] or previous.get("is_kaoyan"))
+        out["numeric"] = bool(set(out["kinds"]) & {"score_line", "plan", "filter", "compare"})
+    return out
+
+
+def detect_kaoyan_turns(turns: list[str]) -> dict[str, Any]:
+    """Detect each turn in order, carrying slots forward."""
+    intent: dict[str, Any] | None = None
+    for turn in turns:
+        intent = detect_kaoyan_intent(turn, previous=intent)
+    return intent or detect_kaoyan_intent("")
+
+
+def detect_kaoyan_intent(goal: str, previous: dict[str, Any] | None = None) -> dict[str, Any]:
     """Rule-based 考研 intent: schools, program codes, colleges, year, question kinds, filters."""
     from kaoyan.normalize import find_schools
 
@@ -198,20 +245,23 @@ def detect_kaoyan_intent(goal: str) -> dict[str, Any]:
             name_kw = nm.group(1)
 
     numeric = bool(set(kinds) & {"score_line", "plan", "filter", "compare"})
-    return {
-        "is_kaoyan": is_kaoyan,
-        "schools": schools,
-        "codes": codes,
-        "prefixes": prefixes,
-        "colleges": colleges,
-        "year": years[0] if len(years) == 1 else None,
-        "kinds": kinds,
-        "numeric": numeric,
-        "privacy": privacy,
-        "export": "export" in kinds,
-        "filters": filters,
-        "name_kw": name_kw,
-    }
+    return inherit_intent(
+        {
+            "is_kaoyan": is_kaoyan,
+            "schools": schools,
+            "codes": codes,
+            "prefixes": prefixes,
+            "colleges": colleges,
+            "year": years[0] if len(years) == 1 else None,
+            "kinds": kinds,
+            "numeric": numeric,
+            "privacy": privacy,
+            "export": "export" in kinds,
+            "filters": filters,
+            "name_kw": name_kw,
+        },
+        previous,
+    )
 
 
 # -- number validation --------------------------------------------------------

@@ -133,6 +133,8 @@ def run_agent(
         store.save_task(record)
         store.append_turn(sid, "user", message, task_id=tid)
         store.append_turn(sid, "assistant", answer[:4000], task_id=tid)
+        if final.get("intent"):
+            store.save_slots(sid, final["intent"])
 
     return {
         "session_id": sid,
