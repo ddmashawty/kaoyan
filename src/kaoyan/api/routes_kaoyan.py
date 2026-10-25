@@ -87,11 +87,14 @@ def score_lines(
     school: str = Query(..., min_length=1, description="必填：sysu/scut/jnu/scnu 或简称"),
     code: str | None = None,
     college: str | None = None,
-    year: int | None = Query(2026, ge=2000, le=2100),
+    year: int | None = Query(None, ge=2000, le=2100),
     include_special: bool = True,
 ) -> ScoreLinesResponse:
     _school_or_404(q, school)
-    result = q.get_score_lines(school=school, code=code, college=college, year=year, include_special=include_special)
+    result = q.get_score_lines(
+        school=school, code=code, college=college, year=q.resolve_year(year, "score_lines"),
+        include_special=include_special,
+    )
     return ScoreLinesResponse(**result)
 
 

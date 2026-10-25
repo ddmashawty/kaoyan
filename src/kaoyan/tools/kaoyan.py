@@ -87,11 +87,11 @@ def get_score_lines(
     school: str = "",
     code: str = "",
     college: str = "",
-    year: int = 2026,
+    year: int = 0,
     include_special: bool = True,
 ) -> str:
     """Return 复试线 of matching programs, each labelled with its scope: 学院复试线, 学校复试基本线,
-    退役大学生士兵专项线, 少数民族骨干计划线. year defaults to 2026 (0 = all years)."""
+    退役大学生士兵专项线, 少数民族骨干计划线. year: intake year; 0 = all years."""
     result = get_query().get_score_lines(
         school=school or None,
         code=code or None,
@@ -160,10 +160,10 @@ def _program_label(p: dict[str, Any]) -> str:
     return f"{p.get('school_name', '')} {college} {p.get('code', '')} {p.get('name', '')}（{p.get('study_mode', '')}）"
 
 
-def _cite(source: dict[str, Any] | None, text: str) -> dict[str, Any] | None:
+def _cite(source: dict[str, Any] | None, text: str, fact_id: str | None = None) -> dict[str, Any] | None:
     if not source or not source.get("doc_id"):
         return None
-    return {
+    cite = {
         "doc_id": source["doc_id"],
         "doc_name": source.get("title") or source["doc_id"],
         "title": source.get("title"),
@@ -173,20 +173,23 @@ def _cite(source: dict[str, Any] | None, text: str) -> dict[str, Any] | None:
         "text": text,
         "source_type": "kaoyan_db",
     }
+    if fact_id:
+        cite["fact_id"] = fact_id
+    return cite
 
 
 def _program_citations(p: dict[str, Any]) -> list[dict[str, Any] | None]:
     label = _program_label(p)
     out: list[dict[str, Any] | None] = []
     for f in p.get("plans") or []:
-        out.append(_cite(f["source"], f"{label}：{f['year']} {f['label']} {f['value_text']}；口径：{f['definition']}"))
+        out.append(_cite(f["source"], f"{label}：{f['year']} {f['label']} {f['value_text']}；口径：{f['definition']}", f.get("fact_id")))
     for e in p.get("public_plan") or []:
         formula = f"，{e['formula']}" if e.get("formula") else ""
         for src in e.get("sources") or []:
-            out.append(_cite(src, f"{label}：{e['year']} 统招 {e['text']}（{e['label']}{formula}）"))
+            out.append(_cite(src, f"{label}：{e['year']} 统招 {e['text']}（{e['label']}{formula}）", e.get("fact_id")))
     for ln in (p.get("score_lines") or []) + (p.get("lines") or []):
         singles = f"（单科 {ln['singles']}）" if ln.get("singles") else ""
-        out.append(_cite(ln["source"], f"{label}：{ln['year']} {ln['label']} 总分 {ln['total']}{singles}；口径：{ln['definition']}"))
+        out.append(_cite(ln["source"], f"{label}：{ln['year']} {ln['label']} 总分 {ln['total']}{singles}；口径：{ln['definition']}", ln.get("fact_id")))
     groups = list(p.get("exam_subjects") or [])
     if p.get("subjects"):
         groups.append(p["subjects"])
@@ -198,9 +201,9 @@ def _program_citations(p: dict[str, Any]) -> list[dict[str, Any] | None]:
             text = f"{label}：{g['year']} {g.get('unknown_reason') or '仅招收推免生'}"
         else:
             text = f"{label}：初试科目未取得（{g.get('unknown_reason') or '原因未记录'}）"
-        out.append(_cite(g.get("source"), text))
+        out.append(_cite(g.get("source"), text, g.get("fact_id")))
     for s in p.get("admission_stats") or []:
-        out.append(_cite(s["source"], f"{label}：{s['year']} {s['label']} {s['value']}（仅统计，不含个人信息）"))
+        out.append(_cite(s["source"], f"{label}：{s['year']} {s['label']} {s['value']}（仅统计，不含个人信息）", s.get("fact_id")))
     for d in p.get("directions") or []:
         out.append(_cite(d.get("source"), f"{label}：{d['year']} 研究方向 {d['code'] or ''} {d['name']}"))
     return out
@@ -254,16 +257,125 @@ def _prune(value: Any) -> Any:
     return value
 
 
-def llm_view(tool_name: str, output: Any, limit: int = 12000) -> str:
-    """Compact JSON of a kaoyan tool output for the model (full output stays in tool_results)."""
+def _fact_value_text(obj: dict[str, Any]) -> str:
+    if obj.get("value_text") not in (None, ""):
+        return str(obj["value_text"])
+    if obj.get("total") is not None:
+        return str(obj["total"])
+    if obj.get("text") not in (None, ""):
+        return str(obj["text"])
+    if obj.get("value") is not None:
+        return str(obj["value"])
+    if obj.get("codes"):
+        return str(obj["codes"])
+    return ""
+
+
+def collect_facts(
+    data: Any, start: int = 0, mapping: dict[str, dict[str, Any]] | None = None
+) -> dict[str, dict[str, Any]]:
+    """Walk tool JSON and assign F1, F2, … to every object that has a fact_id.
+
+    ``mapping`` is updated in place so the same fact_id keeps one alias across tools.
+    """
+    mapping = mapping if mapping is not None else {}
+    known = {v["fact_id"]: k for k, v in mapping.items()}
+    n = max([int(k[1:]) for k in mapping if k[1:].isdigit()] + [start])
+
+    def walk(obj: Any, parent: dict[str, Any] | None) -> None:
+        nonlocal n
+        if isinstance(obj, dict):
+            ident = dict(parent or {})
+            if obj.get("program_id") or obj.get("school"):
+                ident = {
+                    "program_id": obj.get("program_id") or ident.get("program_id"),
+                    "school": obj.get("school") or ident.get("school"),
+                    "school_name": obj.get("school_name") or ident.get("school_name"),
+                    "code": obj.get("code") or ident.get("code"),
+                }
+            text = _fact_value_text(obj)
+            fid = obj.get("fact_id")
+            if fid and text and fid not in known:
+                n += 1
+                alias = f"F{n}"
+                src = obj.get("source")
+                if not src and obj.get("sources"):
+                    src = obj["sources"][0]
+                mapping[alias] = {
+                    "alias": alias,
+                    "fact_id": fid,
+                    "value_text": text,
+                    "value": obj.get("value", obj.get("total")),
+                    "year": obj.get("year"),
+                    "label": obj.get("label"),
+                    "school": ident.get("school"),
+                    "school_name": ident.get("school_name"),
+                    "code": ident.get("code"),
+                    "program_id": ident.get("program_id"),
+                    "source": src,
+                    "upper_bound": bool(obj.get("upper_bound")),
+                }
+                known[fid] = alias
+            for v in obj.values():
+                walk(v, ident)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item, parent)
+
+    walk(data, None)
+    return mapping
+
+
+def _stamp_aliases(obj: Any, by_fid: dict[str, str]) -> Any:
+    if isinstance(obj, dict):
+        out = {k: _stamp_aliases(v, by_fid) for k, v in obj.items()}
+        fid = obj.get("fact_id")
+        if fid in by_fid:
+            out["alias"] = by_fid[fid]
+        return out
+    if isinstance(obj, list):
+        return [_stamp_aliases(v, by_fid) for v in obj]
+    return obj
+
+
+def llm_view_and_facts(
+    tool_name: str,
+    output: Any,
+    limit: int = 12000,
+    start: int = 0,
+    mapping: dict[str, dict[str, Any]] | None = None,
+) -> tuple[str, dict[str, dict[str, Any]]]:
+    """Compact JSON plus {F1: fact} for placeholder rendering."""
     try:
         data = json.loads(str(output))
     except json.JSONDecodeError:
-        return str(output)[:limit]
+        return str(output)[:limit], mapping or {}
+    before = set((mapping or {}).keys())
+    mapping = collect_facts(data, start=start, mapping=mapping)
+    by_fid = {v["fact_id"]: k for k, v in mapping.items()}
     if tool_name == "compare_programs" and isinstance(data, dict):
         data = {k: v for k, v in data.items() if k != "programs"}
-    text = json.dumps(_prune(data), ensure_ascii=False, separators=(",", ":"))
-    return text if len(text) <= limit else text[:limit] + "…[截断]"
+        data["facts"] = [
+            {
+                "alias": alias,
+                "fact_id": fact["fact_id"],
+                "value_text": fact["value_text"],
+                "year": fact.get("year"),
+                "label": fact.get("label"),
+                "school": fact.get("school_name"),
+                "code": fact.get("code"),
+            }
+            for alias, fact in mapping.items()
+        ]
+    text = json.dumps(_stamp_aliases(_prune(data), by_fid), ensure_ascii=False, separators=(",", ":"))
+    new = {k: v for k, v in mapping.items() if k not in before} if before else mapping
+    return (text if len(text) <= limit else text[:limit] + "…[截断]"), new
+
+
+def llm_view(tool_name: str, output: Any, limit: int = 12000) -> str:
+    """Compact JSON of a kaoyan tool output for the model (full output stays in tool_results)."""
+    text, _ = llm_view_and_facts(tool_name, output, limit)
+    return text
 
 
 def rows_to_markdown(title: str, rows: list[dict[str, Any]]) -> str:

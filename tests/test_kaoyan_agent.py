@@ -42,13 +42,13 @@ def kaoyan_env(kaoyan_store: KaoyanStore, monkeypatch: pytest.MonkeyPatch, tmp_p
 
 
 def test_score_line_question_uses_structured_tools(kaoyan_env) -> None:
-    model = kaoyan_env(FakeModel("2026 学院复试线 379（50/50/60/60），来源 cse.sysu.edu.cn/article/3475。"))
+    model = kaoyan_env(FakeModel("模型不应被调用"))
     r = run_agent("中大计算机学院 085404 的 2026 复试线是多少？", persist=False)
     assert [t["tool"] for t in r["trace"]] == ["get_score_lines", "search_programs"]
-    assert r["answer"].startswith("2026 学院复试线 379")
-    assert r["facts"]["validation"] == {"unsupported": [], "regenerated": False, "stripped": []}
+    assert "379" in r["answer"] and "学院复试线" in r["answer"]
+    assert r["facts"]["validation"]["template"] is True
     assert any(c.get("url", "").startswith("https://cse.sysu.edu.cn") for c in r["citations"])
-    assert len(model.calls) == 1  # plan/reflect are deterministic on this path
+    assert len(model.calls) == 0
 
 
 def test_lookup_with_two_codes_queries_each(kaoyan_env) -> None:
@@ -60,16 +60,16 @@ def test_lookup_with_two_codes_queries_each(kaoyan_env) -> None:
 
 
 def test_unsupported_number_regenerates_once(kaoyan_env) -> None:
-    model = kaoyan_env(FakeModel("复试线 379，推免 999 人。", "复试线 379。"))
-    r = run_agent("中大计算机学院 085404 的 2026 复试线是多少？", persist=False)
-    assert r["answer"] == "复试线 379。"
+    model = kaoyan_env(FakeModel("华工 379，中大 999。", "复试线 379。"))
+    r = run_agent("中大和华工 085404 的复试线差多少？", persist=False)
     assert r["facts"]["validation"]["regenerated"] and r["facts"]["validation"]["unsupported"] == ["999"]
+    assert r["answer"] == "复试线 379。"
     assert len(model.calls) == 2 and "999" in model.calls[1][-1].content
 
 
 def test_still_unsupported_number_is_stripped(kaoyan_env) -> None:
     kaoyan_env(FakeModel("推免 999 人。"))
-    r = run_agent("中大计算机学院 085404 的 2026 复试线是多少？", persist=False)
+    r = run_agent("中大和华工 085404 的复试线差多少？", persist=False)
     assert "999" not in r["answer"] and "依据不足" in r["answer"]
     assert r["facts"]["validation"]["stripped"] == ["999"]
 

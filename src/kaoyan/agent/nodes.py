@@ -129,9 +129,10 @@ def finalize_node(state: AgentState) -> dict[str, Any]:
     paths = ", ".join(str(e.get("path")) for e in exports if e.get("path"))
     if paths and "data/exports" not in answer:
         answer = answer.rstrip() + f"\n\n**导出文件：** {paths}"
+    fact_map = validation.pop("fact_map", {})
     return {
         "final_answer": answer,
-        "facts": {**(state.get("facts") or {}), "validation": validation},
+        "facts": {**(state.get("facts") or {}), "validation": validation, "fact_map": fact_map},
         "status": "done",
         "messages": [AIMessage(content=answer)],
     }

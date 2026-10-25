@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +30,12 @@ class Settings(BaseSettings):
 
     kaoyan_db: str = "data/kaoyan.db"
     kaoyan_data_dir: str = "data/kaoyan"
+    kaoyan_current_cycle: int | None = None
+
+    @field_validator("kaoyan_current_cycle", mode="before")
+    @classmethod
+    def _empty_cycle(cls, value: object) -> object:
+        return None if value in ("", None) else value
     kaoyan_chroma_dir: str = "data/chroma_kaoyan"
     kaoyan_collection: str = "kaoyan_docs"
     ocr_backend: str = "none"
