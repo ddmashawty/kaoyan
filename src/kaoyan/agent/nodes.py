@@ -9,6 +9,7 @@ from kaoyan.agent import kaoyan_flow
 from kaoyan.agent.guardrails import detect_kaoyan_intent, recent_tools
 from kaoyan.agent.state import AgentState
 from kaoyan.llm.factory import get_chat_model
+from kaoyan.memory import get_session_memory, load_session_slots
 from kaoyan.runtime_options import effective_max_tool_calls
 from kaoyan.tools import kaoyan as kaoyan_tools
 from kaoyan.tools.registry import parse_export_payload, tools_by_name
@@ -47,7 +48,10 @@ def _run_tool(
 
 
 def plan_node(state: AgentState) -> dict[str, Any]:
-    intent = detect_kaoyan_intent(state.get("user_goal") or "")
+    sid = state.get("session_id") or ""
+    intent = detect_kaoyan_intent(state.get("user_goal") or "", previous=load_session_slots(sid))
+    if sid:
+        get_session_memory().set_slots(sid, intent)
     intent["available"] = bool(intent["is_kaoyan"]) and kaoyan_tools.kaoyan_available()
     if not intent["available"]:
         return {

@@ -45,6 +45,7 @@ class SessionMemory:
         self._turns: dict[str, deque[dict[str, str]]] = defaultdict(
             lambda: deque(maxlen=self._max_turns)
         )
+        self._slots: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     def append(self, session_id: str, role: str, content: str) -> None:
@@ -58,9 +59,19 @@ class SessionMemory:
             turns = list(self._turns.get(session_id, ()))
         return turns[-limit:] if limit else turns
 
+    def set_slots(self, session_id: str, slots: dict[str, Any]) -> None:
+        with self._lock:
+            self._slots[session_id] = dict(slots)
+
+    def slots(self, session_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            got = self._slots.get(session_id)
+        return dict(got) if got else None
+
     def clear(self, session_id: str) -> None:
         with self._lock:
             self._turns.pop(session_id, None)
+            self._slots.pop(session_id, None)
 
 
 class TaskStore:
@@ -107,6 +118,11 @@ class TaskStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_turns_session
                     ON session_turns(session_id, id);
+                CREATE TABLE IF NOT EXISTS session_slots (
+                    session_id TEXT PRIMARY KEY,
+                    slots_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -225,6 +241,27 @@ class TaskStore:
             for r in reversed(rows)
         ]
 
+    def save_slots(self, session_id: str, slots: dict[str, Any]) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO session_slots (session_id, slots_json, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                (session_id, json.dumps(slots, ensure_ascii=False), _utc_now()),
+            )
+
+    def load_slots(self, session_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT slots_json FROM session_slots WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        data = json.loads(row["slots_json"])
+        return data if isinstance(data, dict) else None
+
 
 @lru_cache
 def get_session_memory() -> SessionMemory:
@@ -235,6 +272,13 @@ def get_session_memory() -> SessionMemory:
 def get_task_store() -> TaskStore:
     settings = get_settings()
     return TaskStore(settings.memory_path)
+
+
+def load_session_slots(session_id: str) -> dict[str, Any] | None:
+    """In-process slots first, then the durable row from a previous run."""
+    if not session_id:
+        return None
+    return get_session_memory().slots(session_id) or get_task_store().load_slots(session_id)
 
 
 def new_task_id() -> str:

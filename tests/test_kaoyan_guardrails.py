@@ -4,6 +4,7 @@ import pytest
 
 from kaoyan.agent.guardrails import (
     detect_kaoyan_intent,
+    detect_kaoyan_turns,
     find_unsupported_numbers,
     strip_unsupported_numbers,
 )
@@ -90,6 +91,33 @@ def test_colloquial_major_names_fill_codes_only_when_none_are_written() -> None:
     jnu = detect_kaoyan_intent("暨大计算机科学与技术学硕 2027 推免多少？")
     assert jnu["codes"] == [] and jnu["prefixes"] == ["0812"]
     assert detect_kaoyan_intent("有个叫李明的考生在中大软件工程学院拟录取名单上吗？")["codes"] == []
+
+
+def test_follow_up_inherits_missing_slots_and_this_turn_wins() -> None:
+    narrowed = detect_kaoyan_turns(["对比四校 085404 的 2026 复试线", "那华师的呢？分别是哪个学院？"])
+    assert narrowed["schools"] == ["scnu"]
+    assert narrowed["codes"] == ["085404"] and narrowed["year"] == 2026
+    assert "score_line" in narrowed["kinds"] and "compare" not in narrowed["kinds"]
+    assert narrowed["follow_up"] is True and "codes" in narrowed["inherited"]
+
+    switched = detect_kaoyan_turns(["华师计算机学院 085404 复试线多少", "推免多少？"])
+    assert switched["schools"] == ["scnu"] and switched["codes"] == ["085404"]
+    assert switched["kinds"] == ["plan"]
+
+    same_codes = detect_kaoyan_turns(["暨大信息学院 085404 2027 招多少人", "那中大呢？"])
+    assert same_codes["schools"] == ["sysu"] and same_codes["year"] == 2027
+
+    fresh = detect_kaoyan_intent(
+        "华工软件工程学院 085405 招多少人？",
+        previous=detect_kaoyan_intent("中大计算机学院 085404 的 2026 复试线是多少？"),
+    )
+    assert fresh["codes"] == ["085405"] and fresh["year"] is None and not fresh.get("follow_up")
+
+    no_college = detect_kaoyan_turns(["暨大信息学院 085404 2027 招多少人", "那中大呢？"])
+    assert no_college["colleges"] == []
+
+    bare = detect_kaoyan_turns(["华工计算机学院 085404 招多少人？", "这个数是哪年哪个文件的？"])
+    assert bare["is_kaoyan"] and bare["schools"] == ["scut"] and "plan" in bare["kinds"]
 
 
 def test_detect_privacy() -> None:

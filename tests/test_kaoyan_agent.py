@@ -51,6 +51,16 @@ def test_score_line_question_uses_structured_tools(kaoyan_env) -> None:
     assert len(model.calls) == 1  # plan/reflect are deterministic on this path
 
 
+def test_follow_up_in_the_same_session_keeps_school_and_code(kaoyan_env) -> None:
+    kaoyan_env(FakeModel("华师 085404 统考拟招见目录。"))
+    sid = "sess-follow-up"
+    first = run_agent("华师计算机学院 085404 复试线多少", session_id=sid, persist=False)
+    assert "get_score_lines" in [t["tool"] for t in first["trace"]]
+    second = run_agent("推免多少？", session_id=sid, persist=False)
+    assert [t["tool"] for t in second["trace"]] == ["search_programs"]
+    assert second["trace"][0]["args"] == {"school": "scnu", "code": "085404"}
+
+
 def test_lookup_with_two_codes_queries_each(kaoyan_env) -> None:
     from kaoyan.agent.kaoyan_flow import structured_calls
 
