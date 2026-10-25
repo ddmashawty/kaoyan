@@ -1,5 +1,14 @@
 # 进度日志
 
+## 会话：2026-10-16（P1 L2 检索评测）
+
+- **状态：** 分支 `p1/l2-retrieval`，从 main 开
+- **做了：** `kaoyan.eval.retrieval` 实现 L2：文档级和片段级的 any/all@3/5/10，分过滤和不过滤，按题型和重合度分组，只报命中数。`eval_kaoyan.py` 加 `--build-index`（只用 git 跟踪的原文建 BM25 索引，和 CI 一致）、`--index`、`--backends bm25,hybrid`。CI 改跑 L0–L2，基线加 L2
+- **结果（dev，CI 索引，BM25，过滤）：** 文档 any@5 21/24，片段 all@5 8/20。本机全量索引上 hybrid 和 BM25 每项最多差 1 道
+- **记录：** `docs/kaoyan_p1_notes.md`「L2 检索第一次结果」；报告 `docs/eval/2026-10-16-l2.md`、`2026-10-16-l2-local.md`
+- **顺带：** 删了本机考研索引里重构时误写进去的 3 个测试块
+- **之后：** 修 L0 的 3 条检测器漏判；检索问题（同文档挤占前几名、不带校名的题只查到一所学校的文件）要另找调参题再修
+
 ## 会话：2026-10-11（只留考研路径，包改名 kaoyan）
 
 - **状态：** 分支 `refactor/kaoyan-only`，叠在 PR #8 上，PR 目标 main，#8 先合

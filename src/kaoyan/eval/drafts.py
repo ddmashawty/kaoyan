@@ -29,6 +29,14 @@ def overlap_layer(overlap: float) -> str:
     return next((name for bound, name in OVERLAP_LAYERS if overlap < bound), "high")
 
 
+def question_shape(row: dict[str, Any]) -> str:
+    """single / cross / no_school by the gold schools; unknown when the official text has no answer."""
+    if row["expected_refusal"] == "unknown_data":
+        return "unknown"
+    schools = row["expected_intent"]["schools"]
+    return "no_school" if not schools else ("cross" if len(schools) > 1 else "single")
+
+
 def too_short(alternative: str) -> bool:
     """A bare number under 4 characters ("3", "60", "2.5") matches too much text; it needs its unit."""
     norm = normalize_text(alternative)

@@ -3,10 +3,14 @@
 
 L0 (intent) needs nothing but the code. L1 (tools) needs a kaoyan DB; pass --db to
 read another file, e.g. one built by seed_kaoyan.py + extract_kaoyan.py in CI.
-Neither layer calls an LLM.
+L2 (retrieval) searches a 考研 index: --build-index makes a BM25 one from the
+git-tracked source files (what CI has), --index reuses an existing one. No layer
+calls an LLM; the hybrid backend calls the embedding model.
 
     python scripts/eval_kaoyan.py --layers L0,L1 --out docs/eval
     python scripts/eval_kaoyan.py --baseline docs/eval/baseline.json --max-drop 0.02
+    python scripts/eval_kaoyan.py --layers L2 --build-index /tmp/kaoyan_bm25
+    python scripts/eval_kaoyan.py --layers L2 --index data/chroma_kaoyan --backends bm25,hybrid
 """
 
 from __future__ import annotations
@@ -36,14 +40,65 @@ def _commit() -> str:
     return f"{sha}-dirty" if dirty else sha
 
 
+def tracked_raw_files(raw: Path) -> list[Path]:
+    from kaoyan.ingest.loaders import iter_source_files
+
+    listed = subprocess.run(["git", "ls-files", "-z", "--", raw.relative_to(ROOT).as_posix()], cwd=ROOT,
+                            capture_output=True, check=True).stdout.decode()
+    tracked = {(ROOT / p).resolve() for p in listed.split("\0") if p}
+    return [f for f in iter_source_files(raw) if f.resolve() in tracked]
+
+
+def build_bm25_index(settings, out_dir: Path) -> dict:
+    """BM25 index of the tracked source files with default chunking and no OCR, as CI builds it."""
+    from kaoyan.config import Settings
+    from kaoyan.index import ingest_kaoyan
+
+    s = settings.model_copy(update={
+        "kaoyan_chroma_dir": str(out_dir.resolve()),
+        "embedding_base_url": "",
+        "ocr_backend": "none",
+        **{name: Settings.model_fields[name].default for name in ("chunk_size", "chunk_overlap")},
+    })
+    return ingest_kaoyan(s, paths=tracked_raw_files(s.kaoyan_data_path / "raw"), reindex=True)
+
+
+def open_index(settings, index_dir: str, backend: str):
+    """(search, indexed doc ids) over one index; bm25 ignores any dense vectors in it."""
+    from kaoyan.rag.store import DocumentStore
+
+    update = {"kaoyan_chroma_dir": index_dir}
+    if backend == "bm25":
+        update["embedding_base_url"] = ""
+    s = settings.model_copy(update=update)
+    store = DocumentStore(s)
+    if backend == "hybrid":
+        import chromadb
+        from chromadb.config import Settings as ChromaSettings
+
+        if not s.embedding_enabled:
+            raise SystemExit("hybrid needs EMBEDDING_BASE_URL")
+        client = chromadb.PersistentClient(path=str(s.chroma_path), settings=ChromaSettings(anonymized_telemetry=False))
+        dense = client.get_collection(s.collection_name).count()
+        if dense != store.chunk_count:
+            raise SystemExit(f"hybrid needs a vector for every chunk: {dense} vectors, {store.chunk_count} chunks")
+    indexed = {d["doc_id"] for d in store.list_documents() if d.get("doc_id")}
+    return (lambda q, school, k: store.search(q, top_k=k, school=school)), indexed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--gold", default=str(GOLD))
-    parser.add_argument("--layers", default="L0,L1", help="comma list of L0, L1")
+    parser.add_argument("--layers", default="L0,L1", help="comma list of L0, L1, L2")
     parser.add_argument("--split", default="",
                         help="comma list of splits; default every split except the frozen test split, "
                              "which is only run for milestone sign-off and reported as totals")
     parser.add_argument("--db", default="", help="kaoyan SQLite path for L1 (default: settings)")
+    parser.add_argument("--index", default="", help="考研 index dir for L2 (default: settings)")
+    parser.add_argument("--build-index", default="",
+                        help="build a BM25 index of the git-tracked source files into this dir and use it for L2")
+    parser.add_argument("--backends", default="bm25",
+                        help="comma list of bm25, hybrid; bm25 reports as L2, hybrid as L2-hybrid")
     parser.add_argument("--out", default="", help="directory for <date>.md and <date>.json")
     parser.add_argument("--baseline", default="", help="report json to compare against")
     parser.add_argument("--max-drop", type=float, default=0.02)
@@ -91,6 +146,22 @@ def main() -> int:
                   file=sys.stderr)
             return 2
         report["layers"]["L1"] = run_l1(rows)
+    if "L2" in layers:
+        from kaoyan.eval.retrieval import load_spec_sources, run_l2
+
+        settings = get_settings()
+        index_dir = args.index or settings.kaoyan_chroma_dir
+        if args.build_index:
+            built = build_bm25_index(settings, Path(args.build_index))
+            print(f"indexed {built['docs_indexed']} docs, {built['chunks_total']} chunks into {args.build_index}")
+            index_dir = str(Path(args.build_index).resolve())
+        spec_sources = load_spec_sources(gold.parent)
+        report["meta"]["backends"] = {}
+        for backend in [x.strip() for x in args.backends.split(",") if x.strip()]:
+            name = "L2" if backend == "bm25" else f"L2-{backend}"
+            search, indexed = open_index(settings, index_dir, backend)
+            report["layers"][name] = run_l2(rows, search, indexed, spec_sources)
+            report["meta"]["backends"][name] = backend
 
     for name, layer in report["layers"].items():
         print(name, json.dumps(layer["summary"], ensure_ascii=False))
@@ -115,7 +186,7 @@ def main() -> int:
             if not args.accept_new_failures:
                 print("not written; pass --accept-new-failures and list them in the PR", file=sys.stderr)
                 return 1
-        summary = {**report, "layers": {k: {g: v[g] for g in ("summary", "by_split", "by_trap")}
+        summary = {**report, "layers": {k: {g: v[g] for g in v if g != "rows"}
                                         for k, v in report["layers"].items()},
                    "known_failures": known_failures(report)}
         path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -188,17 +188,12 @@ def stratum(row: dict) -> str:
 def doc_stratum(row: dict) -> str:
     """Retrieval questions: question shape x how much of the question's wording the evidence repeats."""
     sys.path.insert(0, str(ROOT / "src"))
-    from kaoyan.eval.drafts import bigram_overlap, overlap_layer
+    from kaoyan.eval.drafts import bigram_overlap, overlap_layer, question_shape
 
     if row["expected_facts"]:
         return "structured"
-    schools = row["expected_intent"]["schools"]
-    if row["expected_refusal"] == "unknown_data":
-        shape = "unknown"
-    else:
-        shape = "no_school" if not schools else ("cross" if len(schools) > 1 else "single")
     overlap = bigram_overlap(row["turns"][0], [f["text"] for f in row.get("evidence") or []])
-    return f"{shape}/{overlap_layer(overlap)}"
+    return f"{question_shape(row)}/{overlap_layer(overlap)}"
 
 
 def draw_test(rows: list[dict], exclude: set[str], share: float = TEST_SHARE, seed: str = TEST_SEED,

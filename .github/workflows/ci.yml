@@ -22,5 +22,5 @@ jobs:
         run: |
           python scripts/seed_kaoyan.py --db "$RUNNER_TEMP/kaoyan.db" > /dev/null
           python scripts/extract_kaoyan.py --db "$RUNNER_TEMP/kaoyan.db" > /dev/null
-      - name: Eval L0-L1 against baseline
-        run: python scripts/eval_kaoyan.py --layers L0,L1 --db "$RUNNER_TEMP/kaoyan.db" --baseline docs/eval/baseline.json --max-drop 0.02
+      - name: Eval L0-L2 against baseline
+        run: python scripts/eval_kaoyan.py --layers L0,L1,L2 --db "$RUNNER_TEMP/kaoyan.db" --build-index "$RUNNER_TEMP/kaoyan_bm25" --baseline docs/eval/baseline.json --max-drop 0.02

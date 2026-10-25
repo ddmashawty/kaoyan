@@ -15,6 +15,7 @@ from typing import Any
 
 from kaoyan.agent.guardrails import detect_kaoyan_intent
 from kaoyan.eval.metrics import intent_fields, match_fact, ratio, tool_facts
+from kaoyan.eval.retrieval import known_misses, render_l2
 
 Invoke = Callable[[str, dict[str, Any]], str]
 
@@ -139,8 +140,8 @@ def regressions(current: dict[str, Any], baseline: dict[str, Any], max_drop: flo
         if not now:
             continue
         groups = [("", base["summary"], now["summary"])]
-        for key in ("by_split", "by_trap"):
-            for name, old in base.get(key, {}).items():
+        for key in (k for k in base if k.startswith("by_")):
+            for name, old in base[key].items():
                 groups.append((f"[{name}]", old, now.get(key, {}).get(name, {})))
         for tag, old_summary, new_summary in groups:
             for name, old in old_summary.items():
@@ -165,6 +166,9 @@ def known_failures(report: dict[str, Any]) -> dict[str, dict[str, list[str]]]:
             )
             for r in l1["rows"] if r["status"] == "fail"
         }
+    for name, layer in report.get("layers", {}).items():
+        if name.startswith("L2"):
+            out[name] = known_misses(layer)
     return out
 
 
@@ -262,4 +266,8 @@ def render_markdown(report: dict[str, Any]) -> str:
                 calls = "; ".join(f"{n}({json.dumps(a, ensure_ascii=False)})" for n, a in r["calls"])
                 lines.append(f"| {r['id']} | {missing} | `{calls}` |")
             lines.append("")
+    for name, layer in report["layers"].items():
+        if name.startswith("L2"):
+            backend = meta.get("backends", {}).get(name, "")
+            lines += render_l2(f"{name}（{backend}）" if backend else name, layer)
     return "\n".join(lines)
